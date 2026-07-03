@@ -354,7 +354,14 @@ def _broadcast(app, payload: dict) -> None:
         try:
             sub.put_nowait(payload)
         except asyncio.QueueFull:
-            pass
+            # Evict the oldest event to make room: dropping a stale
+            # `progress` is harmless, dropping a terminal `done`/`failed`/
+            # `queue_idle` leaves the UI showing a stuck-running row.
+            try:
+                sub.get_nowait()
+                sub.put_nowait(payload)
+            except (asyncio.QueueEmpty, asyncio.QueueFull):
+                pass
 
 
 # ----- WS ------------------------------------------------------------
@@ -371,12 +378,31 @@ async def analyze_ws(ws: WebSocket) -> None:
             "type": "snapshot",
             "items": [_item_to_dict(i) for i in ws.app.state.analyze_queue.items()],
         })
-        while True:
-            ev = await q.get()
-            try:
-                await ws.send_json(ev)
-            except WebSocketDisconnect:
-                break
+        # Race a receive against the event queue. The client never sends
+        # application messages, so a completed receive means close/disconnect
+        # — without it, a dead client parks this coroutine on q.get()
+        # forever and every reconnect leaks another subscriber queue.
+        recv_task = asyncio.create_task(ws.receive())
+        try:
+            while True:
+                get_task = asyncio.create_task(q.get())
+                done, _ = await asyncio.wait(
+                    {recv_task, get_task}, return_when=asyncio.FIRST_COMPLETED,
+                )
+                if recv_task in done:
+                    get_task.cancel()
+                    break  # disconnect (or any client frame): exit + clean up
+                ev = get_task.result()
+                try:
+                    await ws.send_json(ev)
+                except Exception:
+                    # Dead socket surfaces as RuntimeError/ConnectionClosed,
+                    # NOT WebSocketDisconnect — treat any send failure as gone.
+                    break
+        finally:
+            recv_task.cancel()
+    except WebSocketDisconnect:
+        pass
     finally:
         try:
             ws.app.state.analyze_subscribers.remove(q)
