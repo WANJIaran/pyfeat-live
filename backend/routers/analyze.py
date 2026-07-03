@@ -391,6 +391,14 @@ async def analyze_ws(ws: WebSocket) -> None:
                 )
                 if recv_task in done:
                     get_task.cancel()
+                    try:
+                        recv_task.exception()  # retrieve, if any: disconnects
+                                                # and transport errors both
+                                                # mean "gone" — this just
+                                                # avoids an "exception was
+                                                # never retrieved" log spam
+                    except asyncio.CancelledError:
+                        pass
                     break  # disconnect (or any client frame): exit + clean up
                 ev = get_task.result()
                 try:

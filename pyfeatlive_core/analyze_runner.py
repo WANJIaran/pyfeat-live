@@ -48,6 +48,21 @@ def _load_rgb_image(src: Path) -> Image.Image:
         return im.convert("RGB")
 
 
+def _pts_positions(container, stream) -> dict[int, int]:
+    """Packet pts -> positional frame index (presentation order).
+
+    A cheap demux (no decode) — the same cost the frame-times endpoint
+    pays. Used only on the seek path: deriving indices as round(pts*fps)
+    corrupted them for VFR sources (this app's own Live recordings are
+    wall-clock-PTS), producing duplicate/gapped fex frame values.
+    """
+    ptses = sorted(
+        p.pts for p in container.demux(stream) if p.pts is not None
+    )
+    container.seek(0)
+    return {pts: i for i, pts in enumerate(ptses)}
+
+
 def _iter_video_frames(
     path: Path, vp: VideoParams,
 ) -> Iterator[tuple[int, Image.Image]]:
@@ -57,6 +72,15 @@ def _iter_video_frames(
     frame). frame_index is the source index in the original stream, not
     the post-skip count — so downstream Fex rows reference real positions
     and stay aligned with the full source video copied into the session.
+
+    Indexing is POSITIONAL (decode order), never derived from pts*fps:
+    this app's own Live recordings are VFR with wall-clock-ms PTS, so
+    round(pts*fps) produces duplicate/gapped/out-of-range indices. When
+    there's no seek, we just count frames as we decode them (identical to
+    the pre-seek-support contract). When clip_start forces a seek, plain
+    positional counting can't survive the jump — a cheap demux pass maps
+    each packet's pts to its presentation-order position first, so the
+    post-seek decode can still recover the true positional index.
     """
     container = av.open(str(path))
     try:
@@ -70,21 +94,29 @@ def _iter_video_frames(
         start_anchor = int(start_f)  # stride phase anchor, as before
         end_idx = float("inf") if vp.clip_end is None else vp.clip_end * fps
         tb = stream.time_base
+        pts_pos: dict[int, int] | None = None
         if vp.clip_start and tb:
-            # Jump to the nearest keyframe at/before clip_start instead of
-            # decoding (and discarding) everything from t=0 — a clip_start
-            # 10 minutes in previously decoded ~18k dead frames.
+            # Seek path: index by packet POSITION (pts -> presentation-order
+            # index), then jump. Positional enumerate can't survive a seek,
+            # and round(pts*fps) corrupts VFR indices.
+            pts_pos = _pts_positions(container, stream)
             try:
+                # Jump to the nearest keyframe at/before clip_start instead
+                # of decoding (and discarding) everything from t=0 — a
+                # clip_start 10 minutes in previously decoded ~18k dead
+                # frames.
                 container.seek(int(vp.clip_start / tb), stream=stream)
             except Exception:
-                pass  # unusual container: fall back to decode-from-start
-        pos = None  # positional fallback when frames carry no PTS
+                pts_pos = None  # unusual container: decode from start
+        pos = -1  # positional counter for the no-seek path
         try:
             for frame in container.decode(stream):
-                if frame.pts is not None and tb:
-                    i = int(round(float(frame.pts * tb) * fps))
+                if pts_pos is not None and frame.pts is not None:
+                    i = pts_pos.get(frame.pts)
+                    if i is None:
+                        continue  # packet unseen in the demux pass: skip
                 else:
-                    pos = (pos + 1) if pos is not None else 0
+                    pos += 1
                     i = pos
                 if i < start_f:
                     continue

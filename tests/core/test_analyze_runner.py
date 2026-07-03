@@ -179,6 +179,54 @@ def test_estimate_frames_close_to_actual(tmp_path):
     assert est is not None and abs(est - 60) <= 3
 
 
+def _make_vfr_video(path, n_frames=40, size=(64, 64)):
+    """Encode an mp4 with explicit, jittered PTS — mimicking this app's own
+    Live recorder, which writes wall-clock-ms PTS rather than a constant
+    frame rate. Gaps cycle deterministically over 80-219ms."""
+    import numpy as np
+    from fractions import Fraction
+
+    container = _av.open(str(path), "w")
+    stream = container.add_stream("h264", rate=30)
+    stream.width, stream.height = size
+    stream.pix_fmt = "yuv420p"
+    stream.codec_context.time_base = Fraction(1, 1000)
+    pts_ms = 0
+    for i in range(n_frames):
+        arr = np.full((size[1], size[0], 3), (i * 4) % 255, dtype=np.uint8)
+        frame = _av.VideoFrame.from_ndarray(arr, format="rgb24")
+        frame.pts = pts_ms
+        frame.time_base = Fraction(1, 1000)
+        for pkt in stream.encode(frame):
+            container.mux(pkt)
+        pts_ms += 80 + (i * 37) % 140  # jittered wall-clock-style gap
+    for pkt in stream.encode():
+        container.mux(pkt)
+    container.close()
+    return path
+
+
+def test_vfr_source_yields_positional_indices(tmp_path):
+    """Regression: a VFR source (wall-clock-ms PTS, like this app's own
+    Live recordings) must not have its fex frame indices derived from
+    round(pts*fps) — that corrupts them into duplicate/gapped values on
+    non-CFR streams. With no clip_start (no seek), indexing must be plain
+    positional decode order."""
+    from pyfeatlive_core.analyze_runner import _iter_video_frames
+    from pyfeatlive_core.analyze_queue import VideoParams
+
+    n = 40
+    p = _make_vfr_video(tmp_path / "vfr.mp4", n_frames=n)
+    vp = VideoParams(skip_frames=1, clip_start=None, clip_end=None,
+                     track_identities=False)
+    frames = list(_iter_video_frames(p, vp))
+    idxs = [i for i, _ in frames]
+    assert idxs == list(range(len(idxs))), (
+        f"VFR source produced non-positional indices: {idxs}"
+    )
+    assert len(idxs) == n
+
+
 def test_clip_start_seeks_not_decodes(tmp_path):
     from pyfeatlive_core.analyze_runner import _iter_video_frames
     from pyfeatlive_core.analyze_queue import VideoParams
@@ -192,9 +240,11 @@ def test_clip_start_seeks_not_decodes(tmp_path):
     assert frames, "no frames yielded"
     first_idx = frames[0][0]
     assert 58 <= first_idx <= 62
-    # Frame indices remain source-referenced and increasing.
+    # Frame indices remain source-referenced and STRICTLY increasing (no
+    # duplicates — a duplicate here would mean two decoded frames mapped
+    # to the same pts->position, corrupting downstream fex.csv rows).
     idxs = [i for i, _ in frames]
-    assert idxs == sorted(idxs)
+    assert all(b > a for a, b in zip(idxs, idxs[1:]))
     assert idxs[-1] <= 90
 
 

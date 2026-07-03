@@ -22,11 +22,13 @@ from pyfeatlive_core.thumbnails import extract_face_crop
 router = APIRouter(prefix="/api/sessions", tags=["sessions"])
 
 
-# (session_id-independent) mtime-keyed caches. Keyed by (path, mtime) so
-# any rewrite of the underlying file invalidates naturally; bounded by
-# keeping only the most recent entry per path.
-_BBOX_CACHE: dict[str, tuple[float, dict[tuple[int, int], tuple[float, float, float, float]]]] = {}
-_FRAME_TIMES_CACHE: dict[str, tuple[float, list[float]]] = {}
+# (session_id-independent) mtime-keyed caches. Keyed by (path, mtime_ns) —
+# nanosecond mtime, not float st_mtime, so two rewrites within the same
+# float-precision instant still invalidate correctly — so any rewrite of
+# the underlying file invalidates naturally; bounded by keeping only the
+# most recent entry per path.
+_BBOX_CACHE: dict[str, tuple[int, dict[tuple[int, int], tuple[float, float, float, float]]]] = {}
+_FRAME_TIMES_CACHE: dict[str, tuple[int, list[float]]] = {}
 
 
 def _bbox_index(fex_path: Path) -> dict[tuple[int, int], tuple[float, float, float, float]]:
@@ -36,7 +38,7 @@ def _bbox_index(fex_path: Path) -> dict[tuple[int, int], tuple[float, float, flo
     previously re-scanned the whole CSV (k full parses for k identities).
     """
     key = str(fex_path)
-    mtime = fex_path.stat().st_mtime
+    mtime = fex_path.stat().st_mtime_ns
     hit = _BBOX_CACHE.get(key)
     if hit is not None and hit[0] == mtime:
         return hit[1]
@@ -72,7 +74,7 @@ def _frame_times_cached(video_path: Path) -> list[float]:
     import av
 
     key = str(video_path)
-    mtime = video_path.stat().st_mtime
+    mtime = video_path.stat().st_mtime_ns
     hit = _FRAME_TIMES_CACHE.get(key)
     if hit is not None and hit[0] == mtime:
         return hit[1]
