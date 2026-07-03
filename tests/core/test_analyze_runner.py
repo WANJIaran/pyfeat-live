@@ -196,3 +196,24 @@ def test_clip_start_seeks_not_decodes(tmp_path):
     idxs = [i for i, _ in frames]
     assert idxs == sorted(idxs)
     assert idxs[-1] <= 90
+
+
+def test_clip_start_fractional_fps_boundary(tmp_path):
+    """23.976-style rates: the first admitted frame must be the first with
+    index >= clip_start*fps (truncation admitted one early + shifted stride)."""
+    import math
+    from fractions import Fraction
+    from pyfeatlive_core.analyze_runner import _iter_video_frames
+    from pyfeatlive_core.analyze_queue import VideoParams
+
+    p = _make_video(tmp_path / "ntsc.mp4", n_frames=72, fps=Fraction(24000, 1001))
+    c = _av.open(str(p))
+    try:
+        fps = float(c.streams.video[0].average_rate)
+    finally:
+        c.close()
+    vp = VideoParams(skip_frames=1, clip_start=1.0, clip_end=None,
+                     track_identities=False)
+    frames = list(_iter_video_frames(p, vp))
+    assert frames, "no frames yielded"
+    assert frames[0][0] == math.ceil(1.0 * fps)

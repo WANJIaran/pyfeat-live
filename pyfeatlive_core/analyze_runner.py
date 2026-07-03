@@ -63,7 +63,11 @@ def _iter_video_frames(
         stream = container.streams.video[0]
         fps = float(stream.average_rate or 30)
         step = max(1, int(vp.skip_frames))
-        start_idx = int((vp.clip_start or 0) * fps)
+        # Boundary must compare against the UNTRUNCATED float (old
+        # semantics): int()-truncating admitted frames up to one early on
+        # fractional rates (23.976fps) and phase-shifted the stride.
+        start_f = (vp.clip_start or 0) * fps
+        start_anchor = int(start_f)  # stride phase anchor, as before
         end_idx = float("inf") if vp.clip_end is None else vp.clip_end * fps
         tb = stream.time_base
         if vp.clip_start and tb:
@@ -82,11 +86,11 @@ def _iter_video_frames(
                 else:
                     pos = (pos + 1) if pos is not None else 0
                     i = pos
-                if i < start_idx:
+                if i < start_f:
                     continue
                 if i > end_idx:
                     break
-                if (i - start_idx) % step != 0:
+                if (i - start_anchor) % step != 0:
                     continue
                 try:
                     img = frame.to_image()
