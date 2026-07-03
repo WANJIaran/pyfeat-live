@@ -87,8 +87,14 @@ async def add_to_queue(
     # a path-traversal ("../") into the saved location.
     safe_name = Path(file.filename or "upload").name or "upload"
     saved = _UPLOAD_DIR / f"{int(time.time() * 1000)}_{safe_name}"
-    with open(saved, "wb") as out:
-        shutil.copyfileobj(file.file, out)
+    # The upload can be a multi-GB video: copy it in the default executor
+    # so the event loop keeps serving /api/live/frame etc. meanwhile.
+    def _save() -> None:
+        with open(saved, "wb") as out:
+            shutil.copyfileobj(file.file, out)
+
+    await asyncio.get_running_loop().run_in_executor(None, _save)
+    await file.close()
 
     try:
         item = AnalyzeQueueItem(
@@ -258,6 +264,30 @@ async def stop_run(request: Request) -> dict:
     return {"status": "stopped"}
 
 
+async def _get_or_build_detector(app, cfg: DetectorConfig):
+    """Build a detector, reusing the previous one when the config matches.
+
+    Model load is multi-second and memory-spiky; batch-running N items with
+    the same preset previously paid it N times. Size-1 cache: a config
+    change drops the old detector (freeing its weights) before building.
+    DetectorConfig is a frozen dataclass, so equality comparison is exact.
+
+    ACCEPTED TRADEOFF: the cache persists after the run finishes (so a
+    re-run with the same preset skips the reload), which means a user who
+    analyzes and then uses the Live page has TWO detectors resident
+    (this one + live.detector). Acceptable on the target machines; if it
+    ever bites, evict here on queue_idle or from live /configure.
+    """
+    cached = getattr(app.state, "analyze_detector_cache", None)
+    if cached is not None and cached[0] == cfg:
+        return cached[1]
+    app.state.analyze_detector_cache = None  # release old weights first
+    loop = asyncio.get_running_loop()
+    detector = await loop.run_in_executor(None, build_detector, cfg)
+    app.state.analyze_detector_cache = (cfg, detector)
+    return detector
+
+
 async def _runner_loop(app, req: RunRequest) -> None:
     """Drain the queue one item at a time on the asyncio loop.
 
@@ -276,7 +306,7 @@ async def _runner_loop(app, req: RunRequest) -> None:
 
         loop = asyncio.get_running_loop()
         # Build a fresh detector per item so different items can use
-        # different model configs. (Future: cache by config hash.)
+        # different model configs.
         cfg = DetectorConfig(
             detector_type=item.pipeline.detector_type,
             face_model=item.pipeline.face_model,
@@ -286,7 +316,7 @@ async def _runner_loop(app, req: RunRequest) -> None:
             identity_model=item.pipeline.identity_model,
             device=req.compute,
         )
-        detector = await loop.run_in_executor(None, build_detector, cfg)
+        detector = await _get_or_build_detector(app, cfg)
 
         events: asyncio.Queue = asyncio.Queue()
 
@@ -324,7 +354,14 @@ def _broadcast(app, payload: dict) -> None:
         try:
             sub.put_nowait(payload)
         except asyncio.QueueFull:
-            pass
+            # Evict the oldest event to make room: dropping a stale
+            # `progress` is harmless, dropping a terminal `done`/`failed`/
+            # `queue_idle` leaves the UI showing a stuck-running row.
+            try:
+                sub.get_nowait()
+                sub.put_nowait(payload)
+            except (asyncio.QueueEmpty, asyncio.QueueFull):
+                pass
 
 
 # ----- WS ------------------------------------------------------------
@@ -341,12 +378,39 @@ async def analyze_ws(ws: WebSocket) -> None:
             "type": "snapshot",
             "items": [_item_to_dict(i) for i in ws.app.state.analyze_queue.items()],
         })
-        while True:
-            ev = await q.get()
-            try:
-                await ws.send_json(ev)
-            except WebSocketDisconnect:
-                break
+        # Race a receive against the event queue. The client never sends
+        # application messages, so a completed receive means close/disconnect
+        # — without it, a dead client parks this coroutine on q.get()
+        # forever and every reconnect leaks another subscriber queue.
+        recv_task = asyncio.create_task(ws.receive())
+        try:
+            while True:
+                get_task = asyncio.create_task(q.get())
+                done, _ = await asyncio.wait(
+                    {recv_task, get_task}, return_when=asyncio.FIRST_COMPLETED,
+                )
+                if recv_task in done:
+                    get_task.cancel()
+                    try:
+                        recv_task.exception()  # retrieve, if any: disconnects
+                                                # and transport errors both
+                                                # mean "gone" — this just
+                                                # avoids an "exception was
+                                                # never retrieved" log spam
+                    except asyncio.CancelledError:
+                        pass
+                    break  # disconnect (or any client frame): exit + clean up
+                ev = get_task.result()
+                try:
+                    await ws.send_json(ev)
+                except Exception:
+                    # Dead socket surfaces as RuntimeError/ConnectionClosed,
+                    # NOT WebSocketDisconnect — treat any send failure as gone.
+                    break
+        finally:
+            recv_task.cancel()
+    except WebSocketDisconnect:
+        pass
     finally:
         try:
             ws.app.state.analyze_subscribers.remove(q)

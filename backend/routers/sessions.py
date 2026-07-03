@@ -22,6 +22,79 @@ from pyfeatlive_core.thumbnails import extract_face_crop
 router = APIRouter(prefix="/api/sessions", tags=["sessions"])
 
 
+# (session_id-independent) mtime-keyed caches. Keyed by (path, mtime_ns) —
+# nanosecond mtime, not float st_mtime, so two rewrites within the same
+# float-precision instant still invalidate correctly — so any rewrite of
+# the underlying file invalidates naturally; bounded by keeping only the
+# most recent entry per path.
+_BBOX_CACHE: dict[str, tuple[int, dict[tuple[int, int], tuple[float, float, float, float]]]] = {}
+_FRAME_TIMES_CACHE: dict[str, tuple[int, list[float]]] = {}
+
+
+def _bbox_index(fex_path: Path) -> dict[tuple[int, int], tuple[float, float, float, float]]:
+    """(frame, face_idx) -> bbox for every row, parsed once per fex mtime.
+
+    The Viewer's identity strip requests one thumbnail per identity; each
+    previously re-scanned the whole CSV (k full parses for k identities).
+    """
+    key = str(fex_path)
+    mtime = fex_path.stat().st_mtime_ns
+    hit = _BBOX_CACHE.get(key)
+    if hit is not None and hit[0] == mtime:
+        return hit[1]
+    index: dict[tuple[int, int], tuple[float, float, float, float]] = {}
+    with open(fex_path, newline="") as f:
+        for row in _csv.DictReader(f):
+            try:
+                pair = (int(row["frame"]), int(row["face_idx"]))
+                if pair in index:
+                    continue  # first occurrence wins — the pre-index scan
+                              # broke on first match; keep that contract for
+                              # any file with duplicate (frame, face_idx) rows
+                index[pair] = (
+                    float(row["FaceRectX"]), float(row["FaceRectY"]),
+                    float(row["FaceRectWidth"]), float(row["FaceRectHeight"]),
+                )
+            except (KeyError, ValueError):
+                continue
+    _BBOX_CACHE[key] = (mtime, index)
+    return index
+
+
+def _frame_times_cached(video_path: Path) -> list[float]:
+    """Sorted per-frame presentation timestamps, demuxed once per video mtime.
+
+    Live recordings are written with VARIABLE wall-clock PTS at the detection
+    rate, so a fixed-fps `time = frame / fps` mapping drifts and the overlay
+    desyncs from the video. The fex rows are written lock-step with the video
+    frames (one per encoded frame, in order), so the Viewer aligns fex frame K
+    to the K-th timestamp here and maps video.currentTime <-> frame by actual
+    time. Demuxes packets (no full decode).
+    """
+    import av
+
+    key = str(video_path)
+    mtime = video_path.stat().st_mtime_ns
+    hit = _FRAME_TIMES_CACHE.get(key)
+    if hit is not None and hit[0] == mtime:
+        return hit[1]
+
+    times: list[float] = []
+    container = av.open(str(video_path))
+    try:
+        stream = container.streams.video[0]
+        tb = stream.time_base
+        for packet in container.demux(stream):
+            if packet.pts is None:
+                continue
+            times.append(float(packet.pts * tb) if tb else float(packet.pts))
+    finally:
+        container.close()
+    times.sort()
+    _FRAME_TIMES_CACHE[key] = (mtime, times)
+    return times
+
+
 def _list_session_dirs() -> list[Path]:
     """Return all session subdirectories in the configured root."""
     root = default_sessions_root()
@@ -64,8 +137,18 @@ def get_session(session_id: str) -> dict:
     return summary
 
 
+_RANGE_CHUNK = 1024 * 1024  # 1 MiB per read: bounded memory however large the range
+
+
 def _serve_range(file_path: Path, range_header: str) -> Response:
-    """Parse a Range header and return a 206 Partial Content response."""
+    """Parse a Range header and return a 206 Partial Content response.
+
+    Streams the range in chunks instead of materializing it — browsers
+    open <video> with ``bytes=0-``, which previously buffered the whole
+    recording into memory per request (and again on every scrub).
+    """
+    from fastapi.responses import StreamingResponse
+
     size = file_path.stat().st_size
     spec = range_header[len("bytes="):].split(",", 1)[0].strip()
     start_str, _, end_str = spec.partition("-")
@@ -82,19 +165,33 @@ def _serve_range(file_path: Path, range_header: str) -> Response:
         if start < 0 or start >= size:
             raise HTTPException(416, "range out of bounds")
     end = min(end, size - 1)
+    if end < start:
+        # Inverted range (e.g. bytes=500-100): previously produced a
+        # negative length and a read-to-EOF body that contradicted
+        # Content-Length. 416 per RFC 9110.
+        raise HTTPException(416, "range out of bounds")
     length = end - start + 1
-    with open(file_path, "rb") as f:
-        f.seek(start)
-        data = f.read(length)
-    return Response(
-        content=data,
+
+    def _iter():
+        remaining = length
+        with open(file_path, "rb") as f:
+            f.seek(start)
+            while remaining > 0:
+                chunk = f.read(min(_RANGE_CHUNK, remaining))
+                if not chunk:
+                    break
+                remaining -= len(chunk)
+                yield chunk
+
+    return StreamingResponse(
+        _iter(),
         status_code=206,
         headers={
             "Content-Range": f"bytes {start}-{end}/{size}",
             "Accept-Ranges": "bytes",
             "Content-Length": str(length),
-            "Content-Type": "video/mp4",
         },
+        media_type="video/mp4",
     )
 
 
@@ -139,18 +236,7 @@ def face_thumbnail(session_id: str, frame: int, face_idx: int) -> Response:
     if not fex_path.exists():
         raise HTTPException(404, "no fex.csv in session")
 
-    bbox = None
-    with open(fex_path, newline="") as f:
-        for row in _csv.DictReader(f):
-            try:
-                if int(row["frame"]) == frame and int(row["face_idx"]) == face_idx:
-                    bbox = (
-                        float(row["FaceRectX"]), float(row["FaceRectY"]),
-                        float(row["FaceRectWidth"]), float(row["FaceRectHeight"]),
-                    )
-                    break
-            except (KeyError, ValueError):
-                continue
+    bbox = _bbox_index(fex_path).get((frame, face_idx))
     if bbox is None:
         raise HTTPException(404, "face not found for that (frame, face_idx)")
 
@@ -172,26 +258,12 @@ def frame_times(session_id: str) -> dict[str, list[float]]:
     time. Demuxes packets (no full decode) and returns them in presentation
     order.
     """
-    import av
-
     d = _resolve_session(session_id)
     video_path = d / VIDEO_FILENAME
     if not video_path.exists():
         raise HTTPException(404, "no video in session")
 
-    times: list[float] = []
-    container = av.open(str(video_path))
-    try:
-        stream = container.streams.video[0]
-        tb = stream.time_base
-        for packet in container.demux(stream):
-            if packet.pts is None:
-                continue
-            times.append(float(packet.pts * tb) if tb else float(packet.pts))
-    finally:
-        container.close()
-    times.sort()
-    return {"times": times}
+    return {"times": _frame_times_cached(video_path)}
 
 
 @router.post("/{session_id}/reveal")
