@@ -87,8 +87,14 @@ async def add_to_queue(
     # a path-traversal ("../") into the saved location.
     safe_name = Path(file.filename or "upload").name or "upload"
     saved = _UPLOAD_DIR / f"{int(time.time() * 1000)}_{safe_name}"
-    with open(saved, "wb") as out:
-        shutil.copyfileobj(file.file, out)
+    # The upload can be a multi-GB video: copy it in the default executor
+    # so the event loop keeps serving /api/live/frame etc. meanwhile.
+    def _save() -> None:
+        with open(saved, "wb") as out:
+            shutil.copyfileobj(file.file, out)
+
+    await asyncio.get_running_loop().run_in_executor(None, _save)
+    await file.close()
 
     try:
         item = AnalyzeQueueItem(
@@ -258,6 +264,24 @@ async def stop_run(request: Request) -> dict:
     return {"status": "stopped"}
 
 
+async def _get_or_build_detector(app, cfg: DetectorConfig):
+    """Build a detector, reusing the previous one when the config matches.
+
+    Model load is multi-second and memory-spiky; batch-running N items with
+    the same preset previously paid it N times. Size-1 cache: a config
+    change drops the old detector (freeing its weights) before building.
+    DetectorConfig is a frozen dataclass, so equality comparison is exact.
+    """
+    cached = getattr(app.state, "analyze_detector_cache", None)
+    if cached is not None and cached[0] == cfg:
+        return cached[1]
+    app.state.analyze_detector_cache = None  # release old weights first
+    loop = asyncio.get_running_loop()
+    detector = await loop.run_in_executor(None, build_detector, cfg)
+    app.state.analyze_detector_cache = (cfg, detector)
+    return detector
+
+
 async def _runner_loop(app, req: RunRequest) -> None:
     """Drain the queue one item at a time on the asyncio loop.
 
@@ -276,7 +300,7 @@ async def _runner_loop(app, req: RunRequest) -> None:
 
         loop = asyncio.get_running_loop()
         # Build a fresh detector per item so different items can use
-        # different model configs. (Future: cache by config hash.)
+        # different model configs.
         cfg = DetectorConfig(
             detector_type=item.pipeline.detector_type,
             face_model=item.pipeline.face_model,
@@ -286,7 +310,7 @@ async def _runner_loop(app, req: RunRequest) -> None:
             identity_model=item.pipeline.identity_model,
             device=req.compute,
         )
-        detector = await loop.run_in_executor(None, build_detector, cfg)
+        detector = await _get_or_build_detector(app, cfg)
 
         events: asyncio.Queue = asyncio.Queue()
 
