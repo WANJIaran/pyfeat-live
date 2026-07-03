@@ -271,6 +271,12 @@ async def _get_or_build_detector(app, cfg: DetectorConfig):
     the same preset previously paid it N times. Size-1 cache: a config
     change drops the old detector (freeing its weights) before building.
     DetectorConfig is a frozen dataclass, so equality comparison is exact.
+
+    ACCEPTED TRADEOFF: the cache persists after the run finishes (so a
+    re-run with the same preset skips the reload), which means a user who
+    analyzes and then uses the Live page has TWO detectors resident
+    (this one + live.detector). Acceptable on the target machines; if it
+    ever bites, evict here on queue_idle or from live /configure.
     """
     cached = getattr(app.state, "analyze_detector_cache", None)
     if cached is not None and cached[0] == cfg:
