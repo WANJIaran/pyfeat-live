@@ -26,6 +26,20 @@ from pyfeatlive_core.recorder import RecorderConfig, SessionRecorder
 _VIDEO_SUFFIXES = {".mp4", ".mov", ".avi", ".mkv"}
 _IMAGE_SUFFIXES = {".jpg", ".jpeg", ".png"}
 
+# Pixel budget per detect batch: what the tuned default costs (8 frames of
+# 720p). detect.py stacks the batch as full-res float32 and Detectorv2
+# immediately copies it again — an unscaled 8x4K batch is ~1.5GB of
+# transient tensors, a real OOM on 16GB machines.
+_BATCH_PIXEL_BUDGET = 8 * 1280 * 720
+
+
+def _effective_batch_size(requested: int, width: int, height: int) -> int:
+    """Clamp the batch size so total batch pixels stay within budget."""
+    pixels = width * height
+    if pixels <= 0:
+        return requested
+    return max(1, min(requested, _BATCH_PIXEL_BUDGET // pixels))
+
 
 def _load_rgb_image(src: Path) -> Image.Image:
     """Load an image as RGB, closing the source file handle (``.convert``
@@ -207,6 +221,9 @@ def run_item(
     # thread + open file leak and an empty session dir is orphaned).
     recorder = None
     recorder_closed = False
+    # Bound on every path (video and single-image) so it's never
+    # unassigned by the time the batch-flush check below runs.
+    effective_batch = batch_size
     try:
         if is_video:
             total = _count_video_frames(src)
@@ -216,6 +233,7 @@ def run_item(
             with Image.open(src) as im:
                 vid_w, vid_h = im.size
             vid_fps = 1.0
+        effective_batch = _effective_batch_size(batch_size, vid_w, vid_h)
         item.total_frames = total
         yield {"type": "started", "item_id": item.id, "total_frames": total}
 
@@ -292,7 +310,7 @@ def run_item(
                 break
             batch.append(img)
             offsets.append(idx)
-            if len(batch) >= batch_size:
+            if len(batch) >= effective_batch:
                 _drain_batch(batch, offsets)
                 frames_done += len(batch)
                 item.progress_frames = frames_done

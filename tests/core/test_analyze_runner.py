@@ -129,3 +129,20 @@ def test_recorder_closed_when_detection_errors(tmp_path, monkeypatch):
     # close() ran → the empty session dir was removed, none orphaned.
     leftover = list(run_root.iterdir()) if run_root.exists() else []
     assert leftover == [], f"orphaned session dir after error: {leftover}"
+
+
+def test_effective_batch_size_scales_with_resolution():
+    from pyfeatlive_core.analyze_runner import _effective_batch_size
+
+    # 720p and below: the requested batch stands.
+    assert _effective_batch_size(8, 1280, 720) == 8
+    assert _effective_batch_size(8, 640, 360) == 8
+    # 4K (3840x2160 = 9x the 720p pixel count): 8 -> 1 to keep the
+    # float32 batch tensor within the tuned 720p budget.
+    assert _effective_batch_size(8, 3840, 2160) == 1
+    # 1440p (~2.7x): 8 -> 2.
+    assert _effective_batch_size(8, 2560, 1440) == 2
+    # Never below 1; never above the request; degenerate dims are safe.
+    assert _effective_batch_size(8, 7680, 4320) == 1
+    assert _effective_batch_size(2, 640, 360) == 2
+    assert _effective_batch_size(8, 0, 0) == 8
