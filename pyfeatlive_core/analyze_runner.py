@@ -111,7 +111,13 @@ def _iter_video_frames(
         pos = -1  # positional counter for the no-seek path
         try:
             for frame in container.decode(stream):
-                if pts_pos is not None and frame.pts is not None:
+                if pts_pos is not None:
+                    if frame.pts is None:
+                        # Post-seek, a PTS-less frame has no place in the
+                        # position map; falling into the positional counter
+                        # (which starts from 0 as if unseeked) could admit
+                        # it with a bogus low index. Skip, like map misses.
+                        continue
                     i = pts_pos.get(frame.pts)
                     if i is None:
                         continue  # packet unseen in the demux pass: skip
