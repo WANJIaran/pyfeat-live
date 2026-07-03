@@ -22,6 +22,72 @@ from pyfeatlive_core.thumbnails import extract_face_crop
 router = APIRouter(prefix="/api/sessions", tags=["sessions"])
 
 
+# (session_id-independent) mtime-keyed caches. Keyed by (path, mtime) so
+# any rewrite of the underlying file invalidates naturally; bounded by
+# keeping only the most recent entry per path.
+_BBOX_CACHE: dict[str, tuple[float, dict[tuple[int, int], tuple[float, float, float, float]]]] = {}
+_FRAME_TIMES_CACHE: dict[str, tuple[float, list[float]]] = {}
+
+
+def _bbox_index(fex_path: Path) -> dict[tuple[int, int], tuple[float, float, float, float]]:
+    """(frame, face_idx) -> bbox for every row, parsed once per fex mtime.
+
+    The Viewer's identity strip requests one thumbnail per identity; each
+    previously re-scanned the whole CSV (k full parses for k identities).
+    """
+    key = str(fex_path)
+    mtime = fex_path.stat().st_mtime
+    hit = _BBOX_CACHE.get(key)
+    if hit is not None and hit[0] == mtime:
+        return hit[1]
+    index: dict[tuple[int, int], tuple[float, float, float, float]] = {}
+    with open(fex_path, newline="") as f:
+        for row in _csv.DictReader(f):
+            try:
+                index[(int(row["frame"]), int(row["face_idx"]))] = (
+                    float(row["FaceRectX"]), float(row["FaceRectY"]),
+                    float(row["FaceRectWidth"]), float(row["FaceRectHeight"]),
+                )
+            except (KeyError, ValueError):
+                continue
+    _BBOX_CACHE[key] = (mtime, index)
+    return index
+
+
+def _frame_times_cached(video_path: Path) -> list[float]:
+    """Sorted per-frame presentation timestamps, demuxed once per video mtime.
+
+    Live recordings are written with VARIABLE wall-clock PTS at the detection
+    rate, so a fixed-fps `time = frame / fps` mapping drifts and the overlay
+    desyncs from the video. The fex rows are written lock-step with the video
+    frames (one per encoded frame, in order), so the Viewer aligns fex frame K
+    to the K-th timestamp here and maps video.currentTime <-> frame by actual
+    time. Demuxes packets (no full decode).
+    """
+    import av
+
+    key = str(video_path)
+    mtime = video_path.stat().st_mtime
+    hit = _FRAME_TIMES_CACHE.get(key)
+    if hit is not None and hit[0] == mtime:
+        return hit[1]
+
+    times: list[float] = []
+    container = av.open(str(video_path))
+    try:
+        stream = container.streams.video[0]
+        tb = stream.time_base
+        for packet in container.demux(stream):
+            if packet.pts is None:
+                continue
+            times.append(float(packet.pts * tb) if tb else float(packet.pts))
+    finally:
+        container.close()
+    times.sort()
+    _FRAME_TIMES_CACHE[key] = (mtime, times)
+    return times
+
+
 def _list_session_dirs() -> list[Path]:
     """Return all session subdirectories in the configured root."""
     root = default_sessions_root()
@@ -163,18 +229,7 @@ def face_thumbnail(session_id: str, frame: int, face_idx: int) -> Response:
     if not fex_path.exists():
         raise HTTPException(404, "no fex.csv in session")
 
-    bbox = None
-    with open(fex_path, newline="") as f:
-        for row in _csv.DictReader(f):
-            try:
-                if int(row["frame"]) == frame and int(row["face_idx"]) == face_idx:
-                    bbox = (
-                        float(row["FaceRectX"]), float(row["FaceRectY"]),
-                        float(row["FaceRectWidth"]), float(row["FaceRectHeight"]),
-                    )
-                    break
-            except (KeyError, ValueError):
-                continue
+    bbox = _bbox_index(fex_path).get((frame, face_idx))
     if bbox is None:
         raise HTTPException(404, "face not found for that (frame, face_idx)")
 
@@ -196,26 +251,12 @@ def frame_times(session_id: str) -> dict[str, list[float]]:
     time. Demuxes packets (no full decode) and returns them in presentation
     order.
     """
-    import av
-
     d = _resolve_session(session_id)
     video_path = d / VIDEO_FILENAME
     if not video_path.exists():
         raise HTTPException(404, "no video in session")
 
-    times: list[float] = []
-    container = av.open(str(video_path))
-    try:
-        stream = container.streams.video[0]
-        tb = stream.time_base
-        for packet in container.demux(stream):
-            if packet.pts is None:
-                continue
-            times.append(float(packet.pts * tb) if tb else float(packet.pts))
-    finally:
-        container.close()
-    times.sort()
-    return {"times": times}
+    return {"times": _frame_times_cached(video_path)}
 
 
 @router.post("/{session_id}/reveal")

@@ -136,3 +136,75 @@ def test_returns_96x96_png_for_valid_frame(client, tmp_path, monkeypatch):
     # Verify it decodes to a 96×96 image
     img = Image.open(io.BytesIO(body))
     assert img.size == (96, 96), f"Expected 96×96 but got {img.size}"
+
+
+# ---------------------------------------------------------------------------
+# Cache tests — bbox index is parsed once per fex.csv mtime, not per request
+# ---------------------------------------------------------------------------
+
+def test_bbox_index_cached_by_mtime(client, tmp_path, monkeypatch):
+    from backend.routers import sessions as sessions_router
+
+    monkeypatch.setattr(
+        "backend.routers.sessions.default_sessions_root", lambda: tmp_path,
+    )
+    sess = tmp_path / "sess_cache"
+    sess.mkdir()
+
+    n_frames = 30
+    width, height = 160, 120
+    _write_minimal_mp4(sess / "video.mp4", n_frames=n_frames, width=width, height=height)
+    _write_fex_csv(sess, [
+        {"frame": 0, "face_idx": 0,
+         "FaceRectX": 20, "FaceRectY": 20,
+         "FaceRectWidth": 60, "FaceRectHeight": 60},
+    ])
+
+    calls = {"n": 0}
+    real_reader = sessions_router._csv.DictReader
+
+    def _counting_reader(*a, **k):
+        calls["n"] += 1
+        return real_reader(*a, **k)
+
+    monkeypatch.setattr(sessions_router._csv, "DictReader", _counting_reader)
+    sessions_router._BBOX_CACHE.clear()
+
+    r1 = client.get("/api/sessions/sess_cache/face-thumbnail/0/0")
+    r2 = client.get("/api/sessions/sess_cache/face-thumbnail/0/0")
+    assert r1.status_code == r2.status_code == 200
+    assert calls["n"] == 1  # second request served from the mtime-keyed index
+
+
+# ---------------------------------------------------------------------------
+# Cache test — frame-times demux runs once per video mtime, not per request
+# ---------------------------------------------------------------------------
+
+def test_frame_times_cached_by_mtime(client, tmp_path, monkeypatch):
+    from backend.routers import sessions as sessions_router
+
+    monkeypatch.setattr(
+        "backend.routers.sessions.default_sessions_root", lambda: tmp_path,
+    )
+    sess = tmp_path / "sess_frame_times"
+    sess.mkdir()
+
+    n_frames = 30
+    width, height = 160, 120
+    _write_minimal_mp4(sess / "video.mp4", n_frames=n_frames, width=width, height=height)
+
+    calls = {"n": 0}
+    real_open = av.open
+
+    def _counting_open(*a, **k):
+        calls["n"] += 1
+        return real_open(*a, **k)
+
+    monkeypatch.setattr(av, "open", _counting_open)
+    sessions_router._FRAME_TIMES_CACHE.clear()
+
+    r1 = client.get("/api/sessions/sess_frame_times/frame-times")
+    r2 = client.get("/api/sessions/sess_frame_times/frame-times")
+    assert r1.status_code == r2.status_code == 200
+    assert r1.json() == r2.json()
+    assert calls["n"] == 1  # second request served from the mtime-keyed cache
