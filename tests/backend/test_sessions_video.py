@@ -56,3 +56,23 @@ def test_video_missing_returns_404(client, sessions_root_with_video):
     (s / "video.mp4").unlink()
     r = client.get("/api/sessions/2026-01-01_12-00-00/video")
     assert r.status_code == 404
+
+
+def test_inverted_range_returns_416(client, sessions_root_with_video):
+    r = client.get(
+        "/api/sessions/2026-01-01_12-00-00/video",
+        headers={"Range": "bytes=500-100"},
+    )
+    assert r.status_code == 416
+
+
+def test_open_ended_range_streams_correct_bytes(client, sessions_root_with_video):
+    full = client.get("/api/sessions/2026-01-01_12-00-00/video").content
+    r = client.get(
+        "/api/sessions/2026-01-01_12-00-00/video",
+        headers={"Range": "bytes=10-"},
+    )
+    assert r.status_code == 206
+    assert r.headers["Content-Range"] == f"bytes 10-{len(full)-1}/{len(full)}"
+    assert int(r.headers["Content-Length"]) == len(full) - 10
+    assert r.content == full[10:]

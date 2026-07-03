@@ -64,8 +64,18 @@ def get_session(session_id: str) -> dict:
     return summary
 
 
+_RANGE_CHUNK = 1024 * 1024  # 1 MiB per read: bounded memory however large the range
+
+
 def _serve_range(file_path: Path, range_header: str) -> Response:
-    """Parse a Range header and return a 206 Partial Content response."""
+    """Parse a Range header and return a 206 Partial Content response.
+
+    Streams the range in chunks instead of materializing it — browsers
+    open <video> with ``bytes=0-``, which previously buffered the whole
+    recording into memory per request (and again on every scrub).
+    """
+    from fastapi.responses import StreamingResponse
+
     size = file_path.stat().st_size
     spec = range_header[len("bytes="):].split(",", 1)[0].strip()
     start_str, _, end_str = spec.partition("-")
@@ -82,19 +92,33 @@ def _serve_range(file_path: Path, range_header: str) -> Response:
         if start < 0 or start >= size:
             raise HTTPException(416, "range out of bounds")
     end = min(end, size - 1)
+    if end < start:
+        # Inverted range (e.g. bytes=500-100): previously produced a
+        # negative length and a read-to-EOF body that contradicted
+        # Content-Length. 416 per RFC 9110.
+        raise HTTPException(416, "range out of bounds")
     length = end - start + 1
-    with open(file_path, "rb") as f:
-        f.seek(start)
-        data = f.read(length)
-    return Response(
-        content=data,
+
+    def _iter():
+        remaining = length
+        with open(file_path, "rb") as f:
+            f.seek(start)
+            while remaining > 0:
+                chunk = f.read(min(_RANGE_CHUNK, remaining))
+                if not chunk:
+                    break
+                remaining -= len(chunk)
+                yield chunk
+
+    return StreamingResponse(
+        _iter(),
         status_code=206,
         headers={
             "Content-Range": f"bytes {start}-{end}/{size}",
             "Accept-Ranges": "bytes",
             "Content-Length": str(length),
-            "Content-Type": "video/mp4",
         },
+        media_type="video/mp4",
     )
 
 
