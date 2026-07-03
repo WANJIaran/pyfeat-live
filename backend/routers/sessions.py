@@ -44,7 +44,12 @@ def _bbox_index(fex_path: Path) -> dict[tuple[int, int], tuple[float, float, flo
     with open(fex_path, newline="") as f:
         for row in _csv.DictReader(f):
             try:
-                index[(int(row["frame"]), int(row["face_idx"]))] = (
+                pair = (int(row["frame"]), int(row["face_idx"]))
+                if pair in index:
+                    continue  # first occurrence wins — the pre-index scan
+                              # broke on first match; keep that contract for
+                              # any file with duplicate (frame, face_idx) rows
+                index[pair] = (
                     float(row["FaceRectX"]), float(row["FaceRectY"]),
                     float(row["FaceRectWidth"]), float(row["FaceRectHeight"]),
                 )
