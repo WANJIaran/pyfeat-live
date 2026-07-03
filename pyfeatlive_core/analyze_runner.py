@@ -62,16 +62,31 @@ def _iter_video_frames(
     try:
         stream = container.streams.video[0]
         fps = float(stream.average_rate or 30)
-        start_pts = (vp.clip_start or 0) * fps
-        end_pts = float("inf") if vp.clip_end is None else vp.clip_end * fps
         step = max(1, int(vp.skip_frames))
+        start_idx = int((vp.clip_start or 0) * fps)
+        end_idx = float("inf") if vp.clip_end is None else vp.clip_end * fps
+        tb = stream.time_base
+        if vp.clip_start and tb:
+            # Jump to the nearest keyframe at/before clip_start instead of
+            # decoding (and discarding) everything from t=0 — a clip_start
+            # 10 minutes in previously decoded ~18k dead frames.
+            try:
+                container.seek(int(vp.clip_start / tb), stream=stream)
+            except Exception:
+                pass  # unusual container: fall back to decode-from-start
+        pos = None  # positional fallback when frames carry no PTS
         try:
-            for i, frame in enumerate(container.decode(stream)):
-                if i < start_pts:
+            for frame in container.decode(stream):
+                if frame.pts is not None and tb:
+                    i = int(round(float(frame.pts * tb) * fps))
+                else:
+                    pos = (pos + 1) if pos is not None else 0
+                    i = pos
+                if i < start_idx:
                     continue
-                if i > end_pts:
+                if i > end_idx:
                     break
-                if (i - int(start_pts)) % step != 0:
+                if (i - start_idx) % step != 0:
                     continue
                 try:
                     img = frame.to_image()
@@ -166,12 +181,36 @@ def _transcode_to_h264(src: Path, dst: Path) -> None:
             dst.unlink(missing_ok=True)
 
 
+def _estimate_frames(stream) -> int | None:
+    """Frame-count estimate from duration x rate — no decode.
+
+    Returns None when the container reports neither duration nor rate.
+    Used for the progress denominator only, so an off-by-a-few estimate
+    is fine; the alternative (full decode just to count) doubled job time
+    on containers that omit stream.frames.
+    """
+    rate = stream.average_rate
+    if not rate:
+        return None
+    dur = stream.duration
+    if dur is not None and stream.time_base is not None:
+        return int(float(dur * stream.time_base) * float(rate))
+    cdur = getattr(stream.container, "duration", None)
+    if cdur:
+        import av as _av
+        return int((cdur / _av.time_base) * float(rate))
+    return None
+
+
 def _count_video_frames(path: Path) -> int:
     container = av.open(str(path))
     try:
         stream = container.streams.video[0]
         if stream.frames and stream.frames > 0:
             return int(stream.frames)
+        estimate = _estimate_frames(stream)
+        if estimate is not None and estimate > 0:
+            return estimate
         n = 0
         for _ in container.decode(stream):
             n += 1

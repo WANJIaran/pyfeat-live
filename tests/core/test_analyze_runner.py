@@ -146,3 +146,53 @@ def test_effective_batch_size_scales_with_resolution():
     assert _effective_batch_size(8, 7680, 4320) == 1
     assert _effective_batch_size(2, 640, 360) == 2
     assert _effective_batch_size(8, 0, 0) == 8
+
+
+import av as _av
+
+
+def _make_video(path, n_frames=60, fps=30, size=(64, 64)):
+    import numpy as np
+    container = _av.open(str(path), "w")
+    stream = container.add_stream("h264", rate=fps)
+    stream.width, stream.height = size
+    stream.pix_fmt = "yuv420p"
+    for i in range(n_frames):
+        arr = np.full((size[1], size[0], 3), (i * 4) % 255, dtype=np.uint8)
+        frame = _av.VideoFrame.from_ndarray(arr, format="rgb24")
+        for pkt in stream.encode(frame):
+            container.mux(pkt)
+    for pkt in stream.encode():
+        container.mux(pkt)
+    container.close()
+    return path
+
+
+def test_estimate_frames_close_to_actual(tmp_path):
+    from pyfeatlive_core.analyze_runner import _estimate_frames
+    p = _make_video(tmp_path / "v.mp4", n_frames=60, fps=30)
+    c = _av.open(str(p))
+    try:
+        est = _estimate_frames(c.streams.video[0])
+    finally:
+        c.close()
+    assert est is not None and abs(est - 60) <= 3
+
+
+def test_clip_start_seeks_not_decodes(tmp_path):
+    from pyfeatlive_core.analyze_runner import _iter_video_frames
+    from pyfeatlive_core.analyze_queue import VideoParams
+    p = _make_video(tmp_path / "v.mp4", n_frames=90, fps=30)
+    vp = VideoParams(skip_frames=1, clip_start=2.0, clip_end=None,
+                     track_identities=False)
+    frames = list(_iter_video_frames(p, vp))
+    # First yielded source index must be ~frame 60 (2.0s * 30fps); the
+    # seek lands on the nearest PRIOR keyframe, so indices before 60 must
+    # still be filtered out, and indexing must reflect SOURCE positions.
+    assert frames, "no frames yielded"
+    first_idx = frames[0][0]
+    assert 58 <= first_idx <= 62
+    # Frame indices remain source-referenced and increasing.
+    idxs = [i for i, _ in frames]
+    assert idxs == sorted(idxs)
+    assert idxs[-1] <= 90
