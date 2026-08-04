@@ -11,6 +11,8 @@ these from the frontend; here we just stand up the schema.
 from __future__ import annotations
 
 import csv
+import os
+import threading
 import time
 import uuid
 from dataclasses import dataclass, asdict
@@ -83,7 +85,10 @@ def write_annotations(
     """Replace the annotations file atomically."""
     p = annotations_path(session_dir)
     p.parent.mkdir(parents=True, exist_ok=True)
-    tmp = p.with_suffix(".csv.tmp")
+    # Unique per writer: a FIXED tmp name let two concurrent writers
+    # interleave into one file before replace(). (The rename itself is
+    # atomic; the shared scratch path was the hazard.)
+    tmp = p.with_suffix(f".csv.tmp.{os.getpid()}.{threading.get_ident()}")
     with open(tmp, "w", newline="", encoding="utf-8") as f:
         writer = csv.DictWriter(f, fieldnames=_HEADER)
         writer.writeheader()

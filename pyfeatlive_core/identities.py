@@ -18,6 +18,8 @@ Live recorder can stub out an "Unknown" identity per face track.
 from __future__ import annotations
 
 import csv
+import os
+import threading
 import uuid
 from dataclasses import dataclass, asdict
 from pathlib import Path
@@ -75,7 +77,10 @@ def write_identities(session_dir: Path, identities: Iterable[Identity]) -> None:
     """Replace the identities catalog atomically."""
     p = identities_path(session_dir)
     p.parent.mkdir(parents=True, exist_ok=True)
-    tmp = p.with_suffix(".csv.tmp")
+    # Unique per writer: a FIXED tmp name let two concurrent writers
+    # interleave into one file before replace(). (The rename itself is
+    # atomic; the shared scratch path was the hazard.)
+    tmp = p.with_suffix(f".csv.tmp.{os.getpid()}.{threading.get_ident()}")
     with open(tmp, "w", newline="", encoding="utf-8") as f:
         writer = csv.DictWriter(f, fieldnames=_IDENTITY_HEADER)
         writer.writeheader()
@@ -132,7 +137,10 @@ def write_assignments(
     """Replace the assignments file atomically."""
     p = assignments_path_v2(session_dir)
     p.parent.mkdir(parents=True, exist_ok=True)
-    tmp = p.with_suffix(".csv.tmp")
+    # Unique per writer: a FIXED tmp name let two concurrent writers
+    # interleave into one file before replace(). (The rename itself is
+    # atomic; the shared scratch path was the hazard.)
+    tmp = p.with_suffix(f".csv.tmp.{os.getpid()}.{threading.get_ident()}")
     with open(tmp, "w", newline="", encoding="utf-8") as f:
         writer = csv.DictWriter(f, fieldnames=_ASSIGNMENT_HEADER_V2)
         writer.writeheader()
@@ -226,7 +234,10 @@ def apply_identity_labels_to_fex(session_dir: Path) -> int:
         if "IdentityLabel" not in df.columns:
             return len(df)
         df["IdentityLabel"] = ""
-        tmp = fex_path.with_suffix(".csv.tmp")
+        # Unique per writer: a FIXED tmp name let two concurrent writers
+        # interleave into one file before replace(). (The rename itself is
+        # atomic; the shared scratch path was the hazard.)
+        tmp = fex_path.with_suffix(f".csv.tmp.{os.getpid()}.{threading.get_ident()}")
         df.to_csv(tmp, index=False)
         tmp.replace(fex_path)
         return len(df)
@@ -256,7 +267,10 @@ def apply_identity_labels_to_fex(session_dir: Path) -> int:
     else:
         df["IdentityLabel"] = ""
 
-    tmp = fex_path.with_suffix(".csv.tmp")
+    # Unique per writer: a FIXED tmp name let two concurrent writers
+    # interleave into one file before replace(). (The rename itself is
+    # atomic; the shared scratch path was the hazard.)
+    tmp = fex_path.with_suffix(f".csv.tmp.{os.getpid()}.{threading.get_ident()}")
     df.to_csv(tmp, index=False)
     tmp.replace(fex_path)
     return len(df)

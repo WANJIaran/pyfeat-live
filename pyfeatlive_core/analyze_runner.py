@@ -26,12 +26,41 @@ from pyfeatlive_core.recorder import RecorderConfig, SessionRecorder
 _VIDEO_SUFFIXES = {".mp4", ".mov", ".avi", ".mkv"}
 _IMAGE_SUFFIXES = {".jpg", ".jpeg", ".png"}
 
+# Pixel budget per detect batch: what the tuned default costs (8 frames of
+# 720p). detect.py stacks the batch as full-res float32 and Detectorv2
+# immediately copies it again — an unscaled 8x4K batch is ~1.5GB of
+# transient tensors, a real OOM on 16GB machines.
+_BATCH_PIXEL_BUDGET = 8 * 1280 * 720
+
+
+def _effective_batch_size(requested: int, width: int, height: int) -> int:
+    """Clamp the batch size so total batch pixels stay within budget."""
+    pixels = width * height
+    if pixels <= 0:
+        return requested
+    return max(1, min(requested, _BATCH_PIXEL_BUDGET // pixels))
+
 
 def _load_rgb_image(src: Path) -> Image.Image:
     """Load an image as RGB, closing the source file handle (``.convert``
     returns a fresh image, so the original ``Image.open`` fp can be released)."""
     with Image.open(src) as im:
         return im.convert("RGB")
+
+
+def _pts_positions(container, stream) -> dict[int, int]:
+    """Packet pts -> positional frame index (presentation order).
+
+    A cheap demux (no decode) — the same cost the frame-times endpoint
+    pays. Used only on the seek path: deriving indices as round(pts*fps)
+    corrupted them for VFR sources (this app's own Live recordings are
+    wall-clock-PTS), producing duplicate/gapped fex frame values.
+    """
+    ptses = sorted(
+        p.pts for p in container.demux(stream) if p.pts is not None
+    )
+    container.seek(0)
+    return {pts: i for i, pts in enumerate(ptses)}
 
 
 def _iter_video_frames(
@@ -43,21 +72,63 @@ def _iter_video_frames(
     frame). frame_index is the source index in the original stream, not
     the post-skip count — so downstream Fex rows reference real positions
     and stay aligned with the full source video copied into the session.
+
+    Indexing is POSITIONAL (decode order), never derived from pts*fps:
+    this app's own Live recordings are VFR with wall-clock-ms PTS, so
+    round(pts*fps) produces duplicate/gapped/out-of-range indices. When
+    there's no seek, we just count frames as we decode them (identical to
+    the pre-seek-support contract). When clip_start forces a seek, plain
+    positional counting can't survive the jump — a cheap demux pass maps
+    each packet's pts to its presentation-order position first, so the
+    post-seek decode can still recover the true positional index.
     """
     container = av.open(str(path))
     try:
         stream = container.streams.video[0]
         fps = float(stream.average_rate or 30)
-        start_pts = (vp.clip_start or 0) * fps
-        end_pts = float("inf") if vp.clip_end is None else vp.clip_end * fps
         step = max(1, int(vp.skip_frames))
+        # Boundary must compare against the UNTRUNCATED float (old
+        # semantics): int()-truncating admitted frames up to one early on
+        # fractional rates (23.976fps) and phase-shifted the stride.
+        start_f = (vp.clip_start or 0) * fps
+        start_anchor = int(start_f)  # stride phase anchor, as before
+        end_idx = float("inf") if vp.clip_end is None else vp.clip_end * fps
+        tb = stream.time_base
+        pts_pos: dict[int, int] | None = None
+        if vp.clip_start and tb:
+            # Seek path: index by packet POSITION (pts -> presentation-order
+            # index), then jump. Positional enumerate can't survive a seek,
+            # and round(pts*fps) corrupts VFR indices.
+            pts_pos = _pts_positions(container, stream)
+            try:
+                # Jump to the nearest keyframe at/before clip_start instead
+                # of decoding (and discarding) everything from t=0 — a
+                # clip_start 10 minutes in previously decoded ~18k dead
+                # frames.
+                container.seek(int(vp.clip_start / tb), stream=stream)
+            except Exception:
+                pts_pos = None  # unusual container: decode from start
+        pos = -1  # positional counter for the no-seek path
         try:
-            for i, frame in enumerate(container.decode(stream)):
-                if i < start_pts:
+            for frame in container.decode(stream):
+                if pts_pos is not None:
+                    if frame.pts is None:
+                        # Post-seek, a PTS-less frame has no place in the
+                        # position map; falling into the positional counter
+                        # (which starts from 0 as if unseeked) could admit
+                        # it with a bogus low index. Skip, like map misses.
+                        continue
+                    i = pts_pos.get(frame.pts)
+                    if i is None:
+                        continue  # packet unseen in the demux pass: skip
+                else:
+                    pos += 1
+                    i = pos
+                if i < start_f:
                     continue
-                if i > end_pts:
+                if i > end_idx:
                     break
-                if (i - int(start_pts)) % step != 0:
+                if (i - start_anchor) % step != 0:
                     continue
                 try:
                     img = frame.to_image()
@@ -152,12 +223,36 @@ def _transcode_to_h264(src: Path, dst: Path) -> None:
             dst.unlink(missing_ok=True)
 
 
+def _estimate_frames(stream) -> int | None:
+    """Frame-count estimate from duration x rate — no decode.
+
+    Returns None when the container reports neither duration nor rate.
+    Used for the progress denominator only, so an off-by-a-few estimate
+    is fine; the alternative (full decode just to count) doubled job time
+    on containers that omit stream.frames.
+    """
+    rate = stream.average_rate
+    if not rate:
+        return None
+    dur = stream.duration
+    if dur is not None and stream.time_base is not None:
+        return int(float(dur * stream.time_base) * float(rate))
+    cdur = getattr(stream.container, "duration", None)
+    if cdur:
+        import av as _av
+        return int((cdur / _av.time_base) * float(rate))
+    return None
+
+
 def _count_video_frames(path: Path) -> int:
     container = av.open(str(path))
     try:
         stream = container.streams.video[0]
         if stream.frames and stream.frames > 0:
             return int(stream.frames)
+        estimate = _estimate_frames(stream)
+        if estimate is not None and estimate > 0:
+            return estimate
         n = 0
         for _ in container.decode(stream):
             n += 1
@@ -207,6 +302,9 @@ def run_item(
     # thread + open file leak and an empty session dir is orphaned).
     recorder = None
     recorder_closed = False
+    # Bound on every path (video and single-image) so it's never
+    # unassigned by the time the batch-flush check below runs.
+    effective_batch = batch_size
     try:
         if is_video:
             total = _count_video_frames(src)
@@ -216,6 +314,7 @@ def run_item(
             with Image.open(src) as im:
                 vid_w, vid_h = im.size
             vid_fps = 1.0
+        effective_batch = _effective_batch_size(batch_size, vid_w, vid_h)
         item.total_frames = total
         yield {"type": "started", "item_id": item.id, "total_frames": total}
 
@@ -292,7 +391,7 @@ def run_item(
                 break
             batch.append(img)
             offsets.append(idx)
-            if len(batch) >= batch_size:
+            if len(batch) >= effective_batch:
                 _drain_batch(batch, offsets)
                 frames_done += len(batch)
                 item.progress_frames = frames_done

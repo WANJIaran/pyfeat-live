@@ -131,14 +131,25 @@ class SessionRecorder:
     def __init__(self, root: Path, config: RecorderConfig):
         self.config = config
         ts = time.strftime("%Y-%m-%d_%H-%M-%S")
+        # Second-precision names collide when recordings start <1s apart
+        # (e.g. a rapid stop→start); never reuse a directory another
+        # recorder may still be draining into — suffix instead.
         self.dir: Path = root / ts
-        self.dir.mkdir(parents=True, exist_ok=True)
+        n = 1
+        while True:
+            try:
+                self.dir.mkdir(parents=True, exist_ok=False)
+                break
+            except FileExistsError:
+                n += 1
+                self.dir = root / f"{ts}-{n}"
         (self.dir / "screenshots").mkdir(exist_ok=True)
 
         self._queue: "queue.Queue[Optional[tuple]]" = queue.Queue(
             maxsize=config.queue_size
         )
         self._stop = threading.Event()
+        self._closed = False
         self.dropped_frames = 0
         self.frame_index = 0          # frames offered by recv()
         self.frames_written = 0       # frames the writer actually persisted
@@ -173,6 +184,9 @@ class SessionRecorder:
         ``frame`` may be an av.VideoFrame, a PIL image, or an HxWx3 RGB ndarray;
         the (potentially costly) conversion to a VideoFrame is deferred to the
         writer thread so the caller's event loop stays free."""
+        if self._closed:
+            return  # close() has begun draining; late offers would land
+                    # in a dead queue and skew frames_offered metadata
         idx = self.frame_index
         self.frame_index += 1
         try:
@@ -200,6 +214,7 @@ class SessionRecorder:
         screenshots captured), or None if the session was empty — in
         which case the directory is removed to avoid littering
         ~/Documents with empty timestamped folders."""
+        self._closed = True
         self._queue.put(None)         # poison pill
         self._writer_thread.join(timeout=timeout)
         if self._writer_thread.is_alive():
@@ -248,9 +263,15 @@ class SessionRecorder:
             "video_mode": self.config.video_mode if self.config.record_video else None,
             "record_fex": self.config.record_fex,
             "detector": self.config.detector_info,
-            "capabilities": capabilities_for(
-                self.config.detector_info["detector_type"]
-            ).to_dict(),
+            # detector_info may be empty (bare RecorderConfig — tests,
+            # future callers): omit capabilities rather than KeyError
+            # mid-close and lose metadata.json entirely. The Viewer
+            # treats capabilities as optional.
+            "capabilities": (
+                capabilities_for(dt).to_dict()
+                if (dt := self.config.detector_info.get("detector_type"))
+                else None
+            ),
         }
         try:
             (self.dir / "metadata.json").write_text(json.dumps(meta, indent=2))
@@ -284,12 +305,18 @@ class SessionRecorder:
                 idx, frame, fex = item
                 # Convert raw PIL/ndarray -> VideoFrame HERE, on the writer
                 # thread, so the live event loop never pays it (see offer_frame).
-                if self.config.record_video:
-                    frame = _to_video_frame(frame)
-                    self._write_video(frame, idx)
-                if self.config.record_fex and fex is not None and len(fex):
-                    self._write_fex(fex, idx, frame)
-                self.frames_written += 1
+                # A single bad frame must NOT kill the writer thread — that would
+                # silently truncate the recording mid-session while the UI still
+                # shows "recording". Log and skip the offending frame instead.
+                try:
+                    if self.config.record_video:
+                        frame = _to_video_frame(frame)
+                        self._write_video(frame, idx)
+                    if self.config.record_fex and fex is not None and len(fex):
+                        self._write_fex(fex, idx, frame)
+                    self.frames_written += 1
+                except Exception as e:
+                    logger.warning("Skipping a bad recorder frame (idx=%s): %s", idx, e)
         except Exception as e:
             logger.exception("Writer thread crashed: %s", e)
         finally:

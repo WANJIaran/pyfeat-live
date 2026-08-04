@@ -1,0 +1,63 @@
+name: CI
+
+# PR gate for main: builds the Svelte/Vite frontend (catches the bulk of PR
+# churn). Toolchain pins (pnpm 9 / node 20) + plain `pnpm install` match
+# release.yml.
+#
+# Note: the Rust/Tauri build is intentionally NOT checked here. A bare
+# `cargo check` runs tauri-build's capability/permission codegen, which fails in
+# a fresh CI runner (it needs the full build context that tauri-action sets up).
+# The Rust build is fully validated at release time by release.yml, so a PR-time
+# cargo check would be redundant + flaky. Revisit if PR-time Rust checks become
+# worth the setup (e.g. run the real `tauri build` here).
+on:
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  frontend:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: frontend
+    steps:
+      - uses: actions/checkout@v4
+      - name: install pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 9
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: pnpm
+          cache-dependency-path: frontend/pnpm-lock.yaml
+      - run: pnpm install
+      - name: build (vite)
+        run: pnpm build
+      - name: type-check (svelte-check)
+        # Non-blocking: svelte-check fails on a pre-existing missing type decl for
+        # the vendored ../vendor/ogl.js. Surfaced but not gating; add the decl,
+        # then drop continue-on-error to make it a gate.
+        continue-on-error: true
+        run: pnpm check
+
+  pins:
+    name: shared pins in sync
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: requirements.txt pins match sidecar/runtime/requirements.in
+        run: |
+          set -e
+          for pkg in py-feat pyfeat-generator torchcodec av pillow; do
+            a=$(grep -E "^${pkg}==" requirements.txt | sed 's/#.*//' | tr -d '[:space:]')
+            b=$(grep -E "^${pkg}==" sidecar/runtime/requirements.in | sed 's/#.*//' | tr -d '[:space:]')
+            if [ "$a" != "$b" ]; then
+              echo "::error::pin drift for ${pkg}: requirements.txt has '${a}', runtime has '${b}' (this drift class shipped the v0.8.11 crash)"
+              exit 1
+            fi
+          done
