@@ -7,10 +7,15 @@
 #   - pins exact versions for first-run determinism
 #
 # Bumping a pin: edit the version, then recompile the lock:
-#   uv pip compile sidecar/runtime/requirements.in \
-#     -o sidecar/runtime/requirements.txt --generate-hashes --python-version 3.12
-# (--python-version 3.12 matches the runtime venv so the build is
-# reproducible regardless of the host's default Python.)
+#   MACOSX_DEPLOYMENT_TARGET=14.0 uv pip compile sidecar/runtime/requirements.in \
+#     -o sidecar/runtime/requirements.txt --generate-hashes --python-version 3.12 \
+#     --python-platform aarch64-apple-darwin
+# (--python-version 3.12 matches the runtime venv. The platform flag +
+# deployment target are MANDATORY when compiling from a non-Mac host: without
+# them the lock resolves host-platform deps — the v0.8.23 lock, compiled on
+# Linux, pulled cuda-bindings, which has no macOS wheels, and every updated
+# app failed first-run setup. MACOSX_DEPLOYMENT_TARGET=14.0 is needed because
+# torchcodec ships macosx_14_0 wheels and uv's cross-target default is 13.0.)
 py-feat==2.1.0
 pyfeat-generator==0.1.1
 torchcodec==0.14.0  # match torch 2.12 (transitive via py-feat resolves to a stale 0.11 otherwise)
