@@ -131,11 +131,14 @@ export function drawGaze(
   }
   // Gaze direction in SOURCE coordinates, drawn in the same space as the
   // landmarks (the Live page's CSS scaleX(-1) mirror flips it with the face).
-  // NOTE: the multitask (Detectorv2) yaw sign is under active investigation —
-  // its gaze_yaw appears unstable (sometimes the same sign for left and right
-  // turns), so the arrow can read reversed/erratic independent of this sign.
+  // Both conventions now share the same yaw sign: py-feat >=2.1.1 multitask
+  // gaze_yaw is positive = subject's right = source-image LEFT (same as
+  // L2CS), so source dx = -sin(yaw). The old +sin was calibrated against
+  // pre-2.1 models whose gaze followed the HEAD with erratic yaw (the
+  // "unstable sign" previously noted here) — with 2.1.x the eyes are tracked
+  // and the sign is stable and verified (py-feat probe suite + live testing).
   const dirX = opts?.convention === 'multitask'
-    ? Math.sin(yaw) * Math.cos(pitch)
+    ? -Math.sin(yaw) * Math.cos(pitch)
     : -Math.sin(yaw);
   const dirY = -Math.sin(pitch);
   const endX = ox + dirX * length;
