@@ -16,7 +16,7 @@
 #     --python-version 3.12 --python-platform aarch64-apple-darwin
 # (--python-version 3.12 matches the runtime venv so the build is
 # reproducible regardless of the host's default Python.)
-py-feat==2.0.2
+py-feat==2.1.0
 fastapi>=0.115
 uvicorn[standard]>=0.34
 python-multipart>=0.0.18
