@@ -557,6 +557,13 @@ def _draw_pose(
     # Y→up (green), Z→out-of-screen (blue). Drawn in source coords like the
     # mesh, so the display selfie-mirror applies to both uniformly.
     if gaze_convention == "multitask":
+        # TODO(py-feat 2.1.1): re-verify this swap. The transposition below was
+        # observed against pre-2.1 py-feat (whose Fex pose columns were emitted
+        # swapped and whose model pitch was ~noise); py-feat 2.1.1 emits
+        # verified canonical columns (Pitch=pitch +up, Yaw=yaw), so this hack
+        # likely mis-wires the cube on head turns now. Left untouched pending
+        # an explicit on-camera check (Live's TS cube path is separate and
+        # confirmed working).
         # Detectorv2's multitask pose head reports yaw and pitch SWAPPED
         # relative to the convention py-feat's projection assumes (the model
         # emits [yaw, pitch, roll] but they're physically transposed): a
@@ -632,10 +639,13 @@ def _draw_gaze(
     gp_rad = float(gp)
     gy_rad = float(gy)
     if gaze_convention == "multitask":
-        # Detectorv2's multitask gaze head. Sign under investigation — its
-        # gaze_yaw appears unstable, so the rendered arrow can read reversed
-        # independent of this sign. Kept at +sin(yaw)*cos(pitch) for now.
-        dir_x = float(np.sin(gy_rad) * np.cos(gp_rad))
+        # py-feat >=2.1.1 multitask gaze: positive yaw = subject's right =
+        # source-image LEFT (same convention as L2CS), so dx = -sin(yaw).
+        # The old +sin was calibrated against pre-2.1 models whose gaze
+        # followed the head with erratic yaw (the prior "sign under
+        # investigation" note); 2.1.x tracks the eyes and the sign is stable
+        # (verified on py-feat's probe suite + live webcam testing).
+        dir_x = -float(np.sin(gy_rad) * np.cos(gp_rad))
         dir_y = -float(np.sin(gp_rad))
     else:
         # L2CS (Detectorv1 / MPDetector) — yaw sign hand-tuned.
