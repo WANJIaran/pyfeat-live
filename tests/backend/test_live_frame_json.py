@@ -47,7 +47,7 @@ def test_live_frame_returns_json_with_id(client):
     )
     assert r.status_code == 200
     body = r.json()
-    assert set(body) >= {"id", "generation", "frame", "faces"}
+    assert set(body) >= {"id", "generation", "frame", "faces", "analyzing", "detection_error"}
     assert isinstance(body["faces"], list)
 
 

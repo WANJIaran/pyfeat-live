@@ -188,6 +188,8 @@ export interface LiveFrameResult {
   generation: number;
   frame: [number, number];
   faces: Face[];
+  analyzing?: boolean;
+  detection_error?: string | null;
 }
 
 export const liveApi = {

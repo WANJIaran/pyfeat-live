@@ -116,6 +116,8 @@ async def upload_frame(request: Request) -> Response:
         "generation": live._detection_generation,
         "frame": [int(dims[0]), int(dims[1])],
         "faces": live._cached_faces,
+        "analyzing": live._detection_in_flight,
+        "detection_error": live._detection_error,
     }
 
 
@@ -189,6 +191,7 @@ async def _run_detection(live, img: Image.Image, frame_id: int = -1) -> None:
             )
 
         live._cached_faces = faces
+        live._detection_error = None
         live._cached_fex = fex  # no production reader since faces are pre-serialized; kept for tests/diagnostics
         # dims = the TRUE source resolution — what the overlay coords are in,
         # NOT the detection input size.
@@ -231,10 +234,11 @@ async def _run_detection(live, img: Image.Image, frame_id: int = -1) -> None:
                     )
             except Exception:
                 logging.getLogger(__name__).exception("recorder offer_frame failed")
-    except Exception:
+    except Exception as exc:
         # Detection/bake crashed — surface it (visible in /api/system/logs)
         # instead of silently freezing the feed (e.g. a bad AU colormap).
         logging.getLogger(__name__).exception("live detection failed")
+        live._detection_error = f"{type(exc).__name__}: {exc}"
     finally:
         live._detection_in_flight = False
 

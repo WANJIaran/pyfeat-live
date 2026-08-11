@@ -47,6 +47,10 @@
 
   let compute: ComputeInfo | null = $state(null);
   let detectorCaps: DetectorCapabilities | null = $state(null);
+  let detectorStatus: 'loading' | 'ready' | 'error' = $state('loading');
+  let readyDetectorKey: string | null = null;
+  let pendingDetectorKey: string | null = null;
+  let pendingConfigure: Promise<boolean> | null = null;
   let sidebarCollapsed = $state(false);
   let apiError: string | null = $state(null);
 
@@ -218,7 +222,17 @@
     if (savedToastTimer) clearTimeout(savedToastTimer);
   });
 
-  async function applyConfig(c: LiveConfigure) {
+  function detectorKey(c: LiveConfigure): string {
+    return JSON.stringify({
+      detector_type: c.detector_type, face_model: c.face_model,
+      facepose_model: c.facepose_model, landmark_model: c.landmark_model,
+      au_model: c.au_model, emotion_model: c.emotion_model,
+      identity_model: c.identity_model, gaze_model: c.gaze_model,
+      device: c.device,
+    });
+  }
+
+  async function applyConfig(c: LiveConfigure): Promise<boolean> {
     if (c.detector_type !== config.detector_type) {
       // Reset the landmark style to each detector's natural default on switch:
       // the 478-mesh detectors (Detectorv2 / MPDetector) → 'mesh' tessellation;
@@ -231,8 +245,20 @@
       overlayStyle = { ...overlayStyle, landmarks: { ...overlayStyle.landmarks, style: ls } };
     }
     config = c;
-    try {
-      await liveApi.configure({
+    const key = detectorKey(c);
+    // Starting the camera used to rebuild the already-loaded detector every
+    // time. On Windows that can take many seconds, leaving a moving preview
+    // that looks as though analysis never started. Reuse the loaded model and
+    // also join an in-progress identical configure instead of starting a
+    // second concurrent model build.
+    if (readyDetectorKey === key && detectorStatus === 'ready') return true;
+    if (pendingConfigure && pendingDetectorKey === key) return pendingConfigure;
+
+    detectorStatus = 'loading';
+    pendingDetectorKey = key;
+    const task = (async (): Promise<boolean> => {
+      try {
+        await liveApi.configure({
         ...c,
         toggles: toggles as unknown as Record<string, boolean>,
         landmark_style: landmarkStyle,
@@ -241,10 +267,25 @@
         smooth,
         smooth_strength: smoothStrength,
         track,
-      });
-      apiError = null;
-    } catch (e: any) {
-      apiError = `检测器配置失败：${e?.message ?? e}`;
+        });
+        readyDetectorKey = key;
+        detectorStatus = 'ready';
+        apiError = null;
+        return true;
+      } catch (e: any) {
+        detectorStatus = 'error';
+        apiError = `检测器配置失败：${e?.message ?? e}`;
+        return false;
+      }
+    })();
+    pendingConfigure = task;
+    try {
+      return await task;
+    } finally {
+      if (pendingConfigure === task) {
+        pendingConfigure = null;
+        pendingDetectorKey = null;
+      }
     }
   }
 
@@ -287,11 +328,8 @@
       apiError = cameraStore.error ?? `摄像头启动失败：${e?.message ?? e}`;
       return;
     }
-    try {
-      await applyConfig(config);
-    } catch (e: any) {
-      apiError = `检测器配置失败：${e?.message ?? e}`;
-    }
+    const detectorReady = await applyConfig(config);
+    if (!detectorReady) return;
     isPaused = false;
     isStreaming = true;
     loopAbort = new AbortController();
@@ -394,7 +432,9 @@
       let result;
       try {
         result = await liveApi.uploadFrame(blob, id);
-        apiError = null;
+        apiError = result.detection_error
+          ? `画面分析失败：${result.detection_error}`
+          : null;
       } catch (e: any) {
         if (signal.aborted) return;
         apiError = `画面分析失败：${(e as Error).message}`;
@@ -621,7 +661,7 @@
         {#if isStreaming}
           <span class="absolute top-3.5 left-3.5 px-3 py-1 rounded text-[9.5px] font-bold tracking-wider {isPaused ? 'bg-yellow-500/15 text-yellow-500 border-yellow-500/30' : 'bg-green-500/15 text-green-500 border-green-500/30'} border inline-flex items-center gap-2">
             <span class="w-1.5 h-1.5 rounded-full {isPaused ? 'bg-yellow-500' : 'bg-green-500 animate-pulse'}"></span>
-            {isPaused ? '已暂停' : '实时'}
+            {isPaused ? '已暂停' : lastPaintedId < 0 ? '正在开始分析…' : '实时分析'}
           </span>
         {/if}
         {#if isRecording}
@@ -630,9 +670,19 @@
             录制中
           </span>
         {/if}
-        {#if !isStreaming}
+        {#if !isStreaming && !cameraStore.stream}
           <div class="absolute inset-0 flex items-center justify-center pointer-events-none">
             <span class="text-zinc-500 text-[12px]">摄像头未启动，请点击下方“开始”</span>
+          </div>
+        {/if}
+        {#if !isStreaming && cameraStore.stream && detectorStatus === 'error'}
+          <div class="absolute inset-0 flex items-center justify-center pointer-events-none">
+            <span class="rounded bg-black/75 px-3 py-1.5 text-[11px] text-red-300">摄像头已开启，但检测器启动失败</span>
+          </div>
+        {/if}
+        {#if cameraStore.stream && detectorStatus === 'loading'}
+          <div class="absolute inset-x-0 bottom-12 flex justify-center pointer-events-none">
+            <span class="rounded bg-black/75 px-3 py-1.5 text-[11px] text-amber-300">正在加载检测器，首次启动可能需要一些时间…</span>
           </div>
         {/if}
         {#if isStreaming}
