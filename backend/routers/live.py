@@ -51,6 +51,19 @@ _DETECTION_EXECUTOR = ThreadPoolExecutor(
 )
 
 
+def _frame_result(live) -> dict:
+    """Small cached result shared by frame upload and lightweight polling."""
+    dims = live._cached_frame_dims or [640, 360]
+    return {
+        "id": live._cached_frame_id,
+        "generation": live._detection_generation,
+        "frame": [int(dims[0]), int(dims[1])],
+        "faces": live._cached_faces,
+        "analyzing": live._detection_in_flight,
+        "detection_error": live._detection_error,
+    }
+
+
 @router.post("/frame")
 async def upload_frame(request: Request) -> Response:
     """Schedule async detection on ~1-in-N frames and return latest cached result.
@@ -110,13 +123,18 @@ async def upload_frame(request: Request) -> Response:
     # event loop and starved detection to ~1 fps while recording.
 
     # --- return the cached faces list (serialized once per detection) ----
-    dims = live._cached_frame_dims or [640, 360]
-    return {
-        "id": live._cached_frame_id,
-        "generation": live._detection_generation,
-        "frame": [int(dims[0]), int(dims[1])],
-        "faces": live._cached_faces,
-    }
+    return _frame_result(live)
+
+
+@router.get("/frame/status")
+async def frame_status(request: Request) -> dict:
+    """Return the cached analysis state without uploading another JPEG.
+
+    While inference is running the camera client polls this tiny response.
+    Previously it JPEG-encoded and POSTed ~30 redundant frames per second;
+    none could be analyzed until the single detector worker became free.
+    """
+    return _frame_result(request.app.state.live)
 
 
 
@@ -189,6 +207,7 @@ async def _run_detection(live, img: Image.Image, frame_id: int = -1) -> None:
             )
 
         live._cached_faces = faces
+        live._detection_error = None
         live._cached_fex = fex  # no production reader since faces are pre-serialized; kept for tests/diagnostics
         # dims = the TRUE source resolution — what the overlay coords are in,
         # NOT the detection input size.
@@ -231,10 +250,11 @@ async def _run_detection(live, img: Image.Image, frame_id: int = -1) -> None:
                     )
             except Exception:
                 logging.getLogger(__name__).exception("recorder offer_frame failed")
-    except Exception:
+    except Exception as exc:
         # Detection/bake crashed — surface it (visible in /api/system/logs)
         # instead of silently freezing the feed (e.g. a bad AU colormap).
         logging.getLogger(__name__).exception("live detection failed")
+        live._detection_error = f"{type(exc).__name__}: {exc}"
     finally:
         live._detection_in_flight = False
 

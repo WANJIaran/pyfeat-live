@@ -47,7 +47,7 @@ def test_live_frame_returns_json_with_id(client):
     )
     assert r.status_code == 200
     body = r.json()
-    assert set(body) >= {"id", "generation", "frame", "faces"}
+    assert set(body) >= {"id", "generation", "frame", "faces", "analyzing", "detection_error"}
     assert isinstance(body["faces"], list)
 
 
@@ -87,3 +87,12 @@ def test_live_frame_json_empty_body_returns_400(client):
         headers={"Content-Type": "image/jpeg"},
     )
     assert r.status_code == 400
+
+
+def test_live_frame_status_is_lightweight_json(client):
+    """Status polling returns cached state without requiring an image body."""
+    r = client.get("/api/live/frame/status")
+    assert r.status_code == 200
+    assert set(r.json()) >= {
+        "id", "generation", "frame", "faces", "analyzing", "detection_error",
+    }

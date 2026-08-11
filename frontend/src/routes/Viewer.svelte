@@ -58,6 +58,7 @@
   let toggles: OverlayToggles = $state({
     rects: true, landmarks: true, poses: false, gaze: true,
     aus: false, blendshapes: false, emotions: false, valenceArousal: true,
+    facialBehavior: true,
   });
 
   // Display smoothing for the HTML meta panels (mirrors Live). No `track`
@@ -76,6 +77,7 @@
     { key: 'blendshapes', label: 'Blendshapes' },
     { key: 'emotions', label: 'Emotions' },
     { key: 'valenceArousal', label: 'Valence / Arousal' },
+    { key: 'facialBehavior', label: 'Behavior indices' },
   ];
 
   // --- Layout + overlay-style state -------------------------------------
@@ -228,6 +230,24 @@
         valence_arousal: (() => {
           const v = num('valence'), a = num('arousal');
           return v != null && a != null ? { valence: v, arousal: a } : undefined;
+        })(),
+        facial_behavior: (() => {
+          const facialValence = num('facial_valence_evidence');
+          const facialActivation = num('facial_activation_evidence');
+          const confidence = num('facial_behavior_confidence');
+          if (facialValence == null || facialActivation == null || confidence == null) return undefined;
+          return {
+            facial_valence: facialValence,
+            facial_activation: facialActivation,
+            confidence,
+            expression_evidence: {
+              smile_like: num('evidence_smile_like') ?? 0,
+              sad_like: num('evidence_sad_like') ?? 0,
+              anger_like: num('evidence_anger_like') ?? 0,
+              surprise_like: num('evidence_surprise_like') ?? 0,
+              disgust_like: num('evidence_disgust_like') ?? 0,
+            },
+          };
         })(),
       };
     });

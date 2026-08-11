@@ -11,6 +11,8 @@ from typing import Any
 
 import pandas as pd
 
+from pyfeatlive_core.indices import calculate_indices
+
 
 _EMOTION_COLS = (
     "anger", "disgust", "fear", "happiness",
@@ -106,6 +108,16 @@ def serialize_faces(
             face["emotions"] = {c: _clean(row.get(c)) for c in emotion_cols}
         if au_cols:
             face["aus"] = {c: _clean(row.get(c)) for c in au_cols}
+            # Additive field: existing clients can ignore it. FaceScore is the
+            # detector's available per-face quality signal; AU coverage is
+            # accounted for inside calculate_indices. Pose quality remains 1
+            # until the live pipeline exposes a validated pose-quality metric.
+            tracking_quality = _clean(row.get("FaceScore"))
+            face["facial_behavior"] = calculate_indices(
+                face["aus"],
+                tracking_quality=tracking_quality if tracking_quality is not None else 0.0,
+                pose_quality=1.0,
+            ).to_dict()
         if bs_cols:
             face["blendshapes"] = {c: _clean(row.get(c)) for c in bs_cols}
         if has_va:

@@ -86,6 +86,10 @@ tauri/src-tauri/WixTools/
 # avoids 40MB+ binaries in git history.
 vendor/uv/uv-*
 
+# Windows shared FFmpeg is downloaded and digest-verified in CI. Keep the
+# binaries out of git while retaining vendor/ffmpeg/README.md and its notices.
+vendor/ffmpeg/bin/
+
 # Build artifacts
 *.dmg
 *.app/

@@ -154,13 +154,6 @@ pub fn run() {
             // the install button needs), so the menu just pokes it via
             // `menu://check-for-updates` and the UpdateBanner re-runs its own
             // check.
-            let settings = MenuItem::with_id(
-                app,
-                "settings",
-                "Settings…",
-                true,
-                Some("CmdOrCtrl+,"),
-            )?;
             let check_updates = MenuItem::with_id(
                 app,
                 "check-for-updates",
@@ -170,8 +163,6 @@ pub fn run() {
             )?;
             let mut app_menu = SubmenuBuilder::new(app, "Py-feat")
                 .about(None)
-                .separator()
-                .item(&settings)
                 .separator()
                 .item(&check_updates)
                 .separator();
@@ -212,9 +203,6 @@ pub fn run() {
                 match event.id().0.as_str() {
                     "check-for-updates" => {
                         let _ = app.emit("menu://check-for-updates", ());
-                    }
-                    "settings" => {
-                        let _ = app.emit("menu://settings", ());
                     }
                     _ => {}
                 }
@@ -302,7 +290,7 @@ async fn bootstrap_and_launch(app: &AppHandle) -> Result<(), String> {
             .path()
             .resource_dir()
             .map_err(|e| format!("could not resolve resource dir: {e}"))?;
-        let requirements = resource_dir.join("runtime/requirements.txt");
+        let requirements = bundled_requirements(&resource_dir);
         if needs_install(&python_path, &runtime_dir, &requirements) {
             // Remove a stale venv so a dependency change yields a clean
             // tree (drops packages that were removed across versions).
@@ -357,6 +345,27 @@ async fn bootstrap_and_launch(app: &AppHandle) -> Result<(), String> {
         .env("PYTHONPATH", &pyfeatlive_root)
         .stdout(Stdio::piped())
         .stderr(Stdio::piped());
+
+    // TorchCodec loads libtorchcodec*.dll by absolute path, but those DLLs in
+    // turn depend on FFmpeg's avcodec/avformat/etc. DLLs. Windows does not ship
+    // them, so release builds bundle an LGPL shared FFmpeg and put its bin
+    // directory on the child process PATH before Python imports `feat`.
+    #[cfg(target_os = "windows")]
+    {
+        let ffmpeg_bin = if cfg!(debug_assertions) {
+            dev_repo_root().join("vendor/ffmpeg/bin")
+        } else {
+            app.path()
+                .resource_dir()
+                .map_err(|e| format!("could not resolve resource dir for FFmpeg: {e}"))?
+                .join("runtime/ffmpeg/bin")
+        };
+        let inherited = std::env::var_os("PATH").unwrap_or_default();
+        let paths = std::iter::once(ffmpeg_bin).chain(std::env::split_paths(&inherited));
+        let path = std::env::join_paths(paths)
+            .map_err(|e| format!("could not construct sidecar PATH for FFmpeg: {e}"))?;
+        cmd.env("PATH", path);
+    }
 
     let mut child = cmd
         .spawn()
@@ -485,6 +494,17 @@ fn requirements_stamp_path(runtime_dir: &Path) -> PathBuf {
     runtime_dir.join(".requirements-stamp")
 }
 
+/// Return the lock compiled for the end user's platform. The original lock is
+/// resolved for Apple Silicon; feeding it to Windows can make uv fall back to
+/// Rust source builds and unexpectedly require Visual Studio's link.exe.
+fn bundled_requirements(resource_dir: &Path) -> PathBuf {
+    if cfg!(target_os = "windows") {
+        resource_dir.join("runtime/requirements-windows.txt")
+    } else {
+        resource_dir.join("runtime/requirements.txt")
+    }
+}
+
 /// Whether the Python runtime needs (re)installing: when the venv's python
 /// is missing, when no stamp exists (older install), or when the bundled
 /// requirements.txt differs from the stamped one. The stamp stores the
@@ -515,7 +535,7 @@ async fn run_bootstrap(
         .path()
         .resource_dir()
         .map_err(|e| format!("could not resolve resource dir: {e}"))?;
-    let requirements = resource_dir.join("runtime/requirements.txt");
+    let requirements = bundled_requirements(&resource_dir);
 
     // 1. Create the venv with a uv-managed standalone Python 3.12.
     emit_log(app, "stdout", "Creating Python 3.12 runtime…");

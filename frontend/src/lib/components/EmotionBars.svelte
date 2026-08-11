@@ -22,6 +22,10 @@
 
   // Dominant emotion index (by smoothed value) gets emphasis.
   const dominant = $derived(disp.indexOf(Math.max(...disp)));
+  const emotionNames: Record<string, string> = {
+    anger: '愤怒', disgust: '厌恶', fear: '恐惧', happiness: '高兴',
+    sadness: '悲伤', surprise: '惊讶', neutral: '中性',
+  };
 </script>
 
 <div class="px-2 py-1.5 rounded bg-black/65">
@@ -29,7 +33,7 @@
     <div class="grid grid-cols-[42px_1fr] items-center gap-1.5 mb-1 last:mb-0">
       <span
         class="text-[8px] leading-none truncate {i === dominant ? 'text-white font-semibold' : 'text-zinc-400'}"
-      >{name}</span>
+      >{emotionNames[name] ?? name}</span>
       <div class="h-[5px] bg-white/[0.07]">
         <div
           class="h-full"

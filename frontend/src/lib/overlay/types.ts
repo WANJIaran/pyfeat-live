@@ -10,6 +10,12 @@ export interface Face {
   aus?: Record<string, number | null>;
   blendshapes?: Record<string, number | null>;
   valence_arousal?: { valence: number; arousal: number };
+  facial_behavior?: {
+    facial_valence: number;
+    facial_activation: number;
+    confidence: number;
+    expression_evidence: Record<string, number>;
+  };
 }
 
 export interface LiveState {
@@ -30,6 +36,8 @@ export interface OverlayToggles {
   blendshapes: boolean;
   emotions: boolean;
   valenceArousal: boolean;
+  /** Research-only observed facial-behavior evidence panel. */
+  facialBehavior?: boolean;
 }
 
 export type LandmarkStyle = 'mesh' | 'lines' | 'points';

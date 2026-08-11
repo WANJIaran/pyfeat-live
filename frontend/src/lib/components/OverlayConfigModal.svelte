@@ -43,14 +43,14 @@
   // (overlay-toggle key, display label) for the per-section enable switch.
   type Section = { key: keyof OverlayToggles; label: string };
   const SECTIONS: Section[] = [
-    { key: 'rects', label: 'Faceboxes' },
-    { key: 'landmarks', label: 'Landmarks' },
-    { key: 'poses', label: 'Pose' },
-    { key: 'gaze', label: 'Gaze' },
-    { key: 'aus', label: 'AUs' },
-    { key: 'blendshapes', label: 'Blendshapes' },
-    { key: 'emotions', label: 'Emotions' },
-    { key: 'valenceArousal', label: 'Valence / Arousal' },
+    { key: 'rects', label: '人脸框' },
+    { key: 'landmarks', label: '面部关键点' },
+    { key: 'poses', label: '头部姿态' },
+    { key: 'gaze', label: '视线' },
+    { key: 'aus', label: '动作单元' },
+    { key: 'blendshapes', label: '混合形状' },
+    { key: 'emotions', label: '基础表情' },
+    { key: 'valenceArousal', label: '效价 / 唤醒度' },
   ];
 
   // Detectorv2-only rows are hidden for detectors that don't emit them.
@@ -74,11 +74,11 @@
     onclick={(e) => e.stopPropagation()}
   >
     <div class="flex items-center px-4 py-3 border-b border-zinc-800 sticky top-0 bg-zinc-900">
-      <h5 class="text-[11px] uppercase tracking-wider font-semibold text-zinc-400">Overlay settings</h5>
+      <h5 class="text-[11px] tracking-wider font-semibold text-zinc-400">叠加显示设置</h5>
       <button class="ml-auto inline-flex items-center gap-1 text-[10.5px] text-zinc-500 hover:text-zinc-300 mr-3" onclick={onReset}>
-        <RotateCcw size={11} /> Reset
+        <RotateCcw size={11} /> 恢复默认
       </button>
-      <button class="text-zinc-500 hover:text-zinc-300" onclick={onClose} aria-label="close">
+      <button class="text-zinc-500 hover:text-zinc-300" onclick={onClose} aria-label="关闭">
         <X size={14} />
       </button>
     </div>
@@ -92,18 +92,18 @@
             checked={smooth}
             onchange={(e) => onSmoothChange?.((e.target as HTMLInputElement).checked)}
           />
-          <span class="text-[12px] font-medium text-zinc-100">Stabilize overlays</span>
-          <span class="text-[10px] text-zinc-500">— EMA the box, mesh + readouts to reduce jitter</span>
+          <span class="text-[12px] font-medium text-zinc-100">稳定叠加图形</span>
+          <span class="text-[10px] text-zinc-500">— 减少人脸框、网格和数值抖动</span>
         </label>
         {#if onSmoothStrengthChange}
           <label class="flex items-center gap-2 mt-2 pl-5.5 text-[11px] text-zinc-400" class:opacity-40={!smooth}>
-            strength
+            强度
             <input
               type="range" min="0" max="1" step="0.05" class="accent-green-500 w-32"
               value={smoothStrength} disabled={!smooth}
               oninput={(e) => onSmoothStrengthChange?.(+(e.target as HTMLInputElement).value)} />
             <span class="font-mono text-zinc-300 w-8">{Math.round(smoothStrength * 100)}%</span>
-            <span class="text-[10px] text-zinc-600">more = smoother, laggier</span>
+            <span class="text-[10px] text-zinc-600">越大越平滑，但延迟更高</span>
           </label>
         {/if}
       </div>
@@ -117,8 +117,8 @@
           checked={track}
           onchange={(e) => onTrackChange?.((e.target as HTMLInputElement).checked)}
         />
-        <span class="text-[12px] font-medium text-zinc-100">Fast tracking</span>
-        <span class="text-[10px] text-zinc-500">— skip face detection between frames (Detectorv2)</span>
+        <span class="text-[12px] font-medium text-zinc-100">快速跟踪</span>
+        <span class="text-[10px] text-zinc-500">— 在部分帧间跳过完整人脸检测</span>
       </label>
     {/if}
 
@@ -139,73 +139,73 @@
           <!-- Section controls -->
           <div class="pl-5.5 flex flex-wrap items-center gap-x-4 gap-y-2 text-[11px] text-zinc-400" class:opacity-40={!toggles[s.key]}>
             {#if s.key === 'rects'}
-              <label class="flex items-center gap-1.5">color
+              <label class="flex items-center gap-1.5">颜色
                 <input type="color" class="h-5 w-7 rounded bg-transparent" value={style.faceboxes.color}
                   oninput={(e) => upd('faceboxes', { color: (e.target as HTMLInputElement).value })} />
               </label>
-              <label class="flex items-center gap-1.5">opacity
+              <label class="flex items-center gap-1.5">透明度
                 <input type="range" min="0.1" max="1" step="0.05" class="accent-green-500 w-20" value={style.faceboxes.opacity}
                   oninput={(e) => upd('faceboxes', { opacity: +(e.target as HTMLInputElement).value })} />
               </label>
-              <label class="flex items-center gap-1.5">width
+              <label class="flex items-center gap-1.5">线宽
                 <input type="range" min="1" max="6" step="1" class="accent-green-500 w-24" value={style.faceboxes.lineWidth}
                   oninput={(e) => upd('faceboxes', { lineWidth: +(e.target as HTMLInputElement).value })} />
                 <span class="font-mono text-zinc-300 w-3">{style.faceboxes.lineWidth}</span>
               </label>
 
             {:else if s.key === 'landmarks'}
-              <label class="flex items-center gap-1.5">style
+              <label class="flex items-center gap-1.5">样式
                 <select class="px-1.5 py-0.5 rounded bg-zinc-950 border border-zinc-800 text-zinc-200"
                   value={style.landmarks.style}
                   onchange={(e) => upd('landmarks', { style: (e.target as HTMLSelectElement).value as typeof LANDMARK_STYLES[number] })}>
-                  {#each LANDMARK_STYLES as ls}<option value={ls}>{ls}</option>{/each}
+                  {#each LANDMARK_STYLES as ls}<option value={ls}>{ls === 'mesh' ? '网格' : ls === 'lines' ? '连线' : '点'}</option>{/each}
                 </select>
               </label>
-              <label class="flex items-center gap-1.5">color
+              <label class="flex items-center gap-1.5">颜色
                 <input type="color" class="h-5 w-7 rounded bg-transparent" value={style.landmarks.color}
                   oninput={(e) => upd('landmarks', { color: (e.target as HTMLInputElement).value })} />
               </label>
-              <label class="flex items-center gap-1.5">opacity
+              <label class="flex items-center gap-1.5">透明度
                 <input type="range" min="0.1" max="1" step="0.05" class="accent-green-500 w-20" value={style.landmarks.opacity}
                   oninput={(e) => upd('landmarks', { opacity: +(e.target as HTMLInputElement).value })} />
               </label>
-              <label class="flex items-center gap-1.5">size
+              <label class="flex items-center gap-1.5">大小
                 <input type="range" min="0.5" max="4" step="0.1" class="accent-green-500 w-20" value={style.landmarks.size}
                   oninput={(e) => upd('landmarks', { size: +(e.target as HTMLInputElement).value })} />
               </label>
 
             {:else if s.key === 'poses'}
-              <label class="flex items-center gap-1.5">axis length
+              <label class="flex items-center gap-1.5">坐标轴长度
                 <input type="range" min="0.2" max="1" step="0.05" class="accent-green-500 w-28" value={style.pose.sizeScale}
                   oninput={(e) => upd('pose', { sizeScale: +(e.target as HTMLInputElement).value })} />
               </label>
-              <span class="text-[10px] text-zinc-600">axis colors fixed (X·Y·Z = R·G·B)</span>
+              <span class="text-[10px] text-zinc-600">坐标轴颜色固定（X·Y·Z = 红·绿·蓝）</span>
 
             {:else if s.key === 'gaze'}
-              <label class="flex items-center gap-1.5">color
+              <label class="flex items-center gap-1.5">颜色
                 <input type="color" class="h-5 w-7 rounded bg-transparent" value={style.gaze.color}
                   oninput={(e) => upd('gaze', { color: (e.target as HTMLInputElement).value })} />
               </label>
-              <label class="flex items-center gap-1.5">opacity
+              <label class="flex items-center gap-1.5">透明度
                 <input type="range" min="0.1" max="1" step="0.05" class="accent-green-500 w-20" value={style.gaze.opacity}
                   oninput={(e) => upd('gaze', { opacity: +(e.target as HTMLInputElement).value })} />
               </label>
-              <label class="flex items-center gap-1.5">size
+              <label class="flex items-center gap-1.5">大小
                 <input type="range" min="1" max="6" step="1" class="accent-green-500 w-24" value={style.gaze.lineWidth}
                   oninput={(e) => upd('gaze', { lineWidth: +(e.target as HTMLInputElement).value })} />
                 <span class="font-mono text-zinc-300 w-3">{style.gaze.lineWidth}</span>
               </label>
 
             {:else if s.key === 'aus'}
-              <label class="flex items-center gap-1.5">mode
+              <label class="flex items-center gap-1.5">模式
                 <select class="px-1.5 py-0.5 rounded bg-zinc-950 border border-zinc-800 text-zinc-200"
                   value={style.aus.mode ?? 'heatmap'}
                   onchange={(e) => upd('aus', { mode: (e.target as HTMLSelectElement).value as 'heatmap' | 'points' })}>
-                  <option value="heatmap">Heatmap</option>
-                  <option value="points">Points</option>
+                  <option value="heatmap">热力图</option>
+                  <option value="points">点</option>
                 </select>
               </label>
-              <label class="flex items-center gap-1.5">colormap
+              <label class="flex items-center gap-1.5">配色
                 <select class="px-1.5 py-0.5 rounded bg-zinc-950 border border-zinc-800 text-zinc-200"
                   value={style.aus.colormap}
                   onchange={(e) => upd('aus', { colormap: (e.target as HTMLSelectElement).value as OverlayStyleConfig['aus']['colormap'] })}>
@@ -213,17 +213,17 @@
                 </select>
               </label>
               <span class="inline-block h-3 w-20 rounded border border-zinc-700" style:background={colormapGradient(style.aus.colormap)}></span>
-              <label class="flex items-center gap-1.5">opacity
+              <label class="flex items-center gap-1.5">透明度
                 <input type="range" min="0.1" max="1" step="0.05" class="accent-green-500 w-20" value={style.aus.opacity}
                   oninput={(e) => upd('aus', { opacity: +(e.target as HTMLInputElement).value })} />
               </label>
-              <label class="flex items-center gap-1.5">gamma
+              <label class="flex items-center gap-1.5">伽马
                 <input type="range" min="0.5" max="4" step="0.1" class="accent-green-500 w-20" value={style.aus.gamma ?? 2.2}
                   oninput={(e) => upd('aus', { gamma: +(e.target as HTMLInputElement).value })} />
                 <span class="font-mono text-zinc-400 w-7">{(style.aus.gamma ?? 2.2).toFixed(1)}</span>
               </label>
               {#if (style.aus.mode ?? 'heatmap') === 'points'}
-                <label class="flex items-center gap-1.5">dot size
+                <label class="flex items-center gap-1.5">点大小
                   <input type="range" min="1" max="8" step="0.5" class="accent-green-500 w-20" value={style.aus.pointSize ?? 2}
                     oninput={(e) => upd('aus', { pointSize: +(e.target as HTMLInputElement).value })} />
                   <span class="font-mono text-zinc-400 w-7">{(style.aus.pointSize ?? 2).toFixed(1)}</span>
@@ -231,15 +231,15 @@
               {/if}
 
             {:else if s.key === 'blendshapes'}
-              <label class="flex items-center gap-1.5">mode
+              <label class="flex items-center gap-1.5">模式
                 <select class="px-1.5 py-0.5 rounded bg-zinc-950 border border-zinc-800 text-zinc-200"
                   value={style.blendshapes.mode ?? 'heatmap'}
                   onchange={(e) => upd('blendshapes', { mode: (e.target as HTMLSelectElement).value as 'heatmap' | 'points' })}>
-                  <option value="heatmap">Heatmap</option>
-                  <option value="points">Points</option>
+                  <option value="heatmap">热力图</option>
+                  <option value="points">点</option>
                 </select>
               </label>
-              <label class="flex items-center gap-1.5">colormap
+              <label class="flex items-center gap-1.5">配色
                 <select class="px-1.5 py-0.5 rounded bg-zinc-950 border border-zinc-800 text-zinc-200"
                   value={style.blendshapes.colormap}
                   onchange={(e) => upd('blendshapes', { colormap: (e.target as HTMLSelectElement).value as OverlayStyleConfig['blendshapes']['colormap'] })}>
@@ -247,17 +247,17 @@
                 </select>
               </label>
               <span class="inline-block h-3 w-20 rounded border border-zinc-700" style:background={colormapGradient(style.blendshapes.colormap)}></span>
-              <label class="flex items-center gap-1.5">opacity
+              <label class="flex items-center gap-1.5">透明度
                 <input type="range" min="0.1" max="1" step="0.05" class="accent-green-500 w-20" value={style.blendshapes.opacity}
                   oninput={(e) => upd('blendshapes', { opacity: +(e.target as HTMLInputElement).value })} />
               </label>
-              <label class="flex items-center gap-1.5">gamma
+              <label class="flex items-center gap-1.5">伽马
                 <input type="range" min="0.5" max="4" step="0.1" class="accent-green-500 w-20" value={style.blendshapes.gamma ?? 2.2}
                   oninput={(e) => upd('blendshapes', { gamma: +(e.target as HTMLInputElement).value })} />
                 <span class="font-mono text-zinc-400 w-7">{(style.blendshapes.gamma ?? 2.2).toFixed(1)}</span>
               </label>
               {#if (style.blendshapes.mode ?? 'heatmap') === 'points'}
-                <label class="flex items-center gap-1.5">dot size
+                <label class="flex items-center gap-1.5">点大小
                   <input type="range" min="1" max="8" step="0.5" class="accent-green-500 w-20" value={style.blendshapes.pointSize ?? 2}
                     oninput={(e) => upd('blendshapes', { pointSize: +(e.target as HTMLInputElement).value })} />
                   <span class="font-mono text-zinc-400 w-7">{(style.blendshapes.pointSize ?? 2).toFixed(1)}</span>
@@ -265,15 +265,15 @@
               {/if}
 
             {:else if s.key === 'emotions'}
-              <label class="flex items-center gap-1.5">color
+              <label class="flex items-center gap-1.5">颜色
                 <input type="color" class="h-5 w-7 rounded bg-transparent" value={style.emotions.color}
                   oninput={(e) => upd('emotions', { color: (e.target as HTMLInputElement).value })} />
               </label>
-              <label class="flex items-center gap-1.5">opacity
+              <label class="flex items-center gap-1.5">透明度
                 <input type="range" min="0.1" max="1" step="0.05" class="accent-green-500 w-20" value={style.emotions.opacity}
                   oninput={(e) => upd('emotions', { opacity: +(e.target as HTMLInputElement).value })} />
               </label>
-              <label class="flex items-center gap-1.5">font
+              <label class="flex items-center gap-1.5">字体大小
                 <input type="range" min="8" max="28" step="1" class="accent-green-500 w-24" value={style.emotions.fontSize}
                   oninput={(e) => upd('emotions', { fontSize: +(e.target as HTMLInputElement).value })} />
                 <span class="font-mono text-zinc-300 w-5">{style.emotions.fontSize}</span>

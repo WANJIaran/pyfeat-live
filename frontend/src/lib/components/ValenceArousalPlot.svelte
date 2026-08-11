@@ -52,7 +52,7 @@
       class="absolute rounded-full"
       style="width: 7px; height: 7px; left: {cx}px; top: {cy}px; transform: translate(-50%, -50%); background: {fill}; box-shadow: {shadow};"
     ></div>
-    <span class="absolute text-[6px] uppercase tracking-wide text-zinc-500" style="right: 2px; bottom: -1px;">val</span>
-    <span class="absolute text-[6px] uppercase tracking-wide text-zinc-500" style="left: -1px; top: 50%; transform-origin: left center; transform: rotate(-90deg) translateX(-50%);">aro</span>
+    <span class="absolute text-[6px] tracking-wide text-zinc-500" style="right: 2px; bottom: -1px;">效价</span>
+    <span class="absolute text-[6px] tracking-wide text-zinc-500" style="left: -1px; top: 50%; transform-origin: left center; transform: rotate(-90deg) translateX(-50%);">唤醒</span>
   </div>
 </div>

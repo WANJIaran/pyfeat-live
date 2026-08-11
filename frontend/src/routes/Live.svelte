@@ -15,6 +15,7 @@
   import OverlayConfigModal from '../lib/components/OverlayConfigModal.svelte';
   import EmotionBars from '../lib/components/EmotionBars.svelte';
   import ValenceArousalPlot from '../lib/components/ValenceArousalPlot.svelte';
+  import FacialBehaviorPanel from '../lib/components/FacialBehaviorPanel.svelte';
   import PoseCube from '../lib/components/PoseCube.svelte';
   import OverlayCanvas from '../lib/components/OverlayCanvas.svelte';
   import { placeMetaStack } from '../lib/overlay/metaStack';
@@ -28,7 +29,10 @@
   // RATIO is always preserved — everything downstream (overlay coord space,
   // stage aspect, meta panels) derives from the actual frame dims the
   // backend echoes back, so the app adapts to any camera/resolution.
-  const DET_BUDGET = 640;
+  // 512px keeps enough detail for Detectorv2's internal 256px face crop while
+  // cutting detector-input pixels by 36% compared with the old 640px budget.
+  // The visible camera remains at native resolution.
+  const DET_BUDGET = 512;
   // CAPTURE resolution — a *preference* we request from the camera; the
   // camera reports its real videoWidth/videoHeight, which is what we use.
   const CAP_W = 1280, CAP_H = 720;
@@ -46,6 +50,10 @@
 
   let compute: ComputeInfo | null = $state(null);
   let detectorCaps: DetectorCapabilities | null = $state(null);
+  let detectorStatus: 'loading' | 'ready' | 'error' = $state('loading');
+  let readyDetectorKey: string | null = null;
+  let pendingDetectorKey: string | null = null;
+  let pendingConfigure: Promise<boolean> | null = null;
   let sidebarCollapsed = $state(false);
   let apiError: string | null = $state(null);
 
@@ -84,6 +92,7 @@
   let toggles: OverlayToggles = $state({
     rects: true, landmarks: true, poses: false,
     gaze: false, aus: false, blendshapes: false, emotions: false, valenceArousal: false,
+    facialBehavior: true,
   });
 
   // Live face data from the unified Face payload — drives both OverlayCanvas
@@ -103,7 +112,7 @@
   // while the overlay (coords only) keeps moving.
   const frameCache = new FrameCache(16);
   let nextFrameId = 0;
-  let lastPaintedId = -1;
+  let lastPaintedId = $state(-1);
 
   // Capture the currently displayed frame and download it as a PNG.
   function captureFrame() {
@@ -195,7 +204,7 @@
       else if (compute.cuda.available) config.device = 'cuda';
       else config.device = 'cpu';
     } catch (e: any) {
-      apiError = `Backend unreachable: ${e?.message ?? e}`;
+      apiError = `后台服务无法连接：${e?.message ?? e}`;
       return;
     }
     // Fetch capabilities alongside compute — independent requests, but we
@@ -204,7 +213,7 @@
     try {
       await applyConfig(config);
     } catch (e: any) {
-      apiError = `Detector config failed: ${e?.message ?? e}`;
+      apiError = `检测器配置失败：${e?.message ?? e}`;
     }
     overlayEdges = await systemApi.overlayEdges().catch(() => null);
     mpToDlib68 = (await systemApi.auTable().catch(() => null))?.mpToDlib68 ?? null;
@@ -216,7 +225,17 @@
     if (savedToastTimer) clearTimeout(savedToastTimer);
   });
 
-  async function applyConfig(c: LiveConfigure) {
+  function detectorKey(c: LiveConfigure): string {
+    return JSON.stringify({
+      detector_type: c.detector_type, face_model: c.face_model,
+      facepose_model: c.facepose_model, landmark_model: c.landmark_model,
+      au_model: c.au_model, emotion_model: c.emotion_model,
+      identity_model: c.identity_model, gaze_model: c.gaze_model,
+      device: c.device,
+    });
+  }
+
+  async function applyConfig(c: LiveConfigure): Promise<boolean> {
     if (c.detector_type !== config.detector_type) {
       // Reset the landmark style to each detector's natural default on switch:
       // the 478-mesh detectors (Detectorv2 / MPDetector) → 'mesh' tessellation;
@@ -229,8 +248,20 @@
       overlayStyle = { ...overlayStyle, landmarks: { ...overlayStyle.landmarks, style: ls } };
     }
     config = c;
-    try {
-      await liveApi.configure({
+    const key = detectorKey(c);
+    // Starting the camera used to rebuild the already-loaded detector every
+    // time. On Windows that can take many seconds, leaving a moving preview
+    // that looks as though analysis never started. Reuse the loaded model and
+    // also join an in-progress identical configure instead of starting a
+    // second concurrent model build.
+    if (readyDetectorKey === key && detectorStatus === 'ready') return true;
+    if (pendingConfigure && pendingDetectorKey === key) return pendingConfigure;
+
+    detectorStatus = 'loading';
+    pendingDetectorKey = key;
+    const task = (async (): Promise<boolean> => {
+      try {
+        await liveApi.configure({
         ...c,
         toggles: toggles as unknown as Record<string, boolean>,
         landmark_style: landmarkStyle,
@@ -239,10 +270,25 @@
         smooth,
         smooth_strength: smoothStrength,
         track,
-      });
-      apiError = null;
-    } catch (e: any) {
-      apiError = `Detector config failed: ${e?.message ?? e}`;
+        });
+        readyDetectorKey = key;
+        detectorStatus = 'ready';
+        apiError = null;
+        return true;
+      } catch (e: any) {
+        detectorStatus = 'error';
+        apiError = `检测器配置失败：${e?.message ?? e}`;
+        return false;
+      }
+    })();
+    pendingConfigure = task;
+    try {
+      return await task;
+    } finally {
+      if (pendingConfigure === task) {
+        pendingConfigure = null;
+        pendingDetectorKey = null;
+      }
     }
   }
 
@@ -258,7 +304,7 @@
         track,
       });
     } catch (e: any) {
-      apiError = `Overlay hints failed: ${e?.message ?? e}`;
+      apiError = `叠加显示配置失败：${e?.message ?? e}`;
     }
   }
 
@@ -266,8 +312,8 @@
     apiError = null;
     if (!cameraStore.selectedDeviceId) {
       apiError = cameraStore.devices.length === 0
-        ? 'No camera detected. Grant camera permission in browser settings and refresh.'
-        : 'No camera selected — pick one from the sidebar.';
+        ? (cameraStore.error ?? '未检测到摄像头。请允许摄像头权限，然后点击左侧“刷新”。')
+        : '尚未选择摄像头，请在左侧选择一个设备。';
       return;
     }
     try {
@@ -276,16 +322,17 @@
       if (sourceVideo) {
         sourceVideo.srcObject = stream;
         await sourceVideo.play();
+        if (sourceVideo.videoWidth && sourceVideo.videoHeight) {
+          frameW = sourceVideo.videoWidth;
+          frameH = sourceVideo.videoHeight;
+        }
       }
     } catch (e: any) {
-      apiError = `Camera failed to start: ${e?.message ?? e}`;
+      apiError = cameraStore.error ?? `摄像头启动失败：${e?.message ?? e}`;
       return;
     }
-    try {
-      await applyConfig(config);
-    } catch (e: any) {
-      apiError = `Detector config failed: ${e?.message ?? e}`;
-    }
+    const detectorReady = await applyConfig(config);
+    if (!detectorReady) return;
     isPaused = false;
     isStreaming = true;
     loopAbort = new AbortController();
@@ -301,9 +348,16 @@
     (async () => {
       try {
         const stream = await startCamera(id, CAP_W, CAP_H);
-        if (sourceVideo) { sourceVideo.srcObject = stream; await sourceVideo.play(); }
+        if (sourceVideo) {
+          sourceVideo.srcObject = stream;
+          await sourceVideo.play();
+          if (sourceVideo.videoWidth && sourceVideo.videoHeight) {
+            frameW = sourceVideo.videoWidth;
+            frameH = sourceVideo.videoHeight;
+          }
+        }
       } catch (e: any) {
-        apiError = `Camera switch failed: ${e?.message ?? e}`;
+        apiError = cameraStore.error ?? `切换摄像头失败：${e?.message ?? e}`;
       }
     })();
   });
@@ -381,10 +435,21 @@
       let result;
       try {
         result = await liveApi.uploadFrame(blob, id);
-        apiError = null;
+        // Only one detector job can run at a time. Poll a tiny cached-status
+        // response while it works instead of encoding and uploading camera
+        // frames that the backend cannot consume. As soon as it finishes the
+        // next loop iteration captures a fresh frame, preserving low latency.
+        while (result.analyzing && !signal.aborted) {
+          await new Promise((r) => setTimeout(r, 25));
+          if (signal.aborted) return;
+          result = await liveApi.frameStatus();
+        }
+        apiError = result.detection_error
+          ? `画面分析失败：${result.detection_error}`
+          : null;
       } catch (e: any) {
         if (signal.aborted) return;
-        apiError = `Frame upload failed: ${(e as Error).message}`;
+        apiError = `画面分析失败：${(e as Error).message}`;
         await new Promise((r) => setTimeout(r, 250));
         continue;
       }
@@ -496,7 +561,7 @@
       isRecording = true;
       apiError = null;
     } catch (e: any) {
-      apiError = `Recording start failed: ${e?.message ?? e}`;
+      apiError = `开始录制失败：${e?.message ?? e}`;
     }
   }
 
@@ -507,7 +572,7 @@
       apiError = null;
       if (res?.session_dir) showSavedToast(res.session_dir);
     } catch (e: any) {
-      apiError = `Recording stop failed: ${e?.message ?? e}`;
+      apiError = `停止录制失败：${e?.message ?? e}`;
     }
   }
 
@@ -534,16 +599,16 @@
       <button
         class="absolute top-4 -right-3 w-6 h-6 rounded-full bg-zinc-800 border border-zinc-700 text-zinc-400 hover:text-zinc-50 inline-flex items-center justify-center z-10"
         onclick={() => (sidebarCollapsed = true)}
-        aria-label="Collapse sidebar"
-        title="Collapse sidebar"
+        aria-label="收起侧边栏"
+        title="收起侧边栏"
       ><ChevronLeft size={12} /></button>
     </div>
   {:else}
     <button
       class="self-start mt-4 ml-2 w-6 h-6 rounded-full bg-zinc-800 border border-zinc-700 text-zinc-400 hover:text-zinc-50 inline-flex items-center justify-center"
       onclick={() => (sidebarCollapsed = false)}
-      aria-label="Expand sidebar"
-      title="Expand sidebar"
+      aria-label="展开侧边栏"
+      title="展开侧边栏"
     ><ChevronRight size={12} /></button>
   {/if}
 
@@ -556,9 +621,9 @@
       </div>
     {/if}
 
-    <!-- Video stage. The hidden <video> only holds the MediaStream for
-         capture; the visible image is displayCanvas, painted from the
-         locally cached frame that detection ran on (lock-to-detection).
+    <!-- Video stage. The raw <video> is visible immediately so camera startup
+         never looks like a black/frozen screen. Once the first detection
+         returns, displayCanvas fades in with the matching cached frame.
          OverlayCanvas renders landmarks/rects client-side, layered over
          the same mirrored stage so it mirrors with the video. The logs
          panel (when open) sits beside the video in this row. -->
@@ -571,20 +636,21 @@
         style="aspect-ratio: {frameW} / {frameH}; max-width: 100%; max-height: 100%;"
         bind:clientWidth={videoDisplayW}
       >
-        <video
-          bind:this={sourceVideo}
-          class="hidden"
-          playsinline
-          muted
-        ></video>
         <!-- Single mirrored wrapper: scaleX(-1) lives here so BOTH the video
              frame and the OverlayCanvas are mirrored together. The canvas
              keeps its sizing/object-contain classes; the overlay's absolute
              inset-0 box aligns to this same wrapper. -->
         <div class="absolute inset-0" style="transform: scaleX(-1);">
+          <video
+            bind:this={sourceVideo}
+            class="absolute inset-0 w-full h-full object-contain"
+            autoplay
+            playsinline
+            muted
+          ></video>
           <canvas
             bind:this={displayCanvas}
-            class="absolute inset-0 w-full h-full object-contain"
+            class="absolute inset-0 w-full h-full object-contain transition-opacity duration-150 {lastPaintedId >= 0 ? 'opacity-100' : 'opacity-0'}"
           ></canvas>
 
           <!-- OverlayCanvas is inside the same mirrored wrapper, so its
@@ -607,23 +673,33 @@
         {#if isStreaming}
           <span class="absolute top-3.5 left-3.5 px-3 py-1 rounded text-[9.5px] font-bold tracking-wider {isPaused ? 'bg-yellow-500/15 text-yellow-500 border-yellow-500/30' : 'bg-green-500/15 text-green-500 border-green-500/30'} border inline-flex items-center gap-2">
             <span class="w-1.5 h-1.5 rounded-full {isPaused ? 'bg-yellow-500' : 'bg-green-500 animate-pulse'}"></span>
-            {isPaused ? 'PAUSED' : 'LIVE'}
+            {isPaused ? '已暂停' : lastPaintedId < 0 ? '正在开始分析…' : '实时分析'}
           </span>
         {/if}
         {#if isRecording}
           <span class="absolute top-3.5 right-3.5 px-3 py-1 rounded text-[9.5px] font-bold tracking-wider bg-red-500/15 text-red-500 border border-red-500/30 inline-flex items-center gap-2">
             <span class="w-1.5 h-1.5 rounded-full bg-red-500 animate-pulse"></span>
-            REC
+            录制中
           </span>
         {/if}
-        {#if !isStreaming}
+        {#if !isStreaming && !cameraStore.stream}
           <div class="absolute inset-0 flex items-center justify-center pointer-events-none">
-            <span class="text-zinc-500 text-[12px] font-mono">camera off — press Start ↓</span>
+            <span class="text-zinc-500 text-[12px]">摄像头未启动，请点击下方“开始”</span>
+          </div>
+        {/if}
+        {#if !isStreaming && cameraStore.stream && detectorStatus === 'error'}
+          <div class="absolute inset-0 flex items-center justify-center pointer-events-none">
+            <span class="rounded bg-black/75 px-3 py-1.5 text-[11px] text-red-300">摄像头已开启，但检测器启动失败</span>
+          </div>
+        {/if}
+        {#if cameraStore.stream && detectorStatus === 'loading'}
+          <div class="absolute inset-x-0 bottom-12 flex justify-center pointer-events-none">
+            <span class="rounded bg-black/75 px-3 py-1.5 text-[11px] text-amber-300">正在加载检测器，首次启动可能需要一些时间…</span>
           </div>
         {/if}
         {#if isStreaming}
           <span class="absolute bottom-3.5 left-3.5 px-2.5 py-1 rounded text-[10.5px] font-mono bg-white/10 border border-white/10 backdrop-blur">
-            {fps.toFixed(0)} fps · frame {frameIndex}
+            {fps.toFixed(0)} 帧/秒 · 已分析 {frameIndex} 帧
           </span>
         {/if}
 
@@ -643,14 +719,16 @@
             {#each liveFaces as face, fi}
               {@const emoOn = !!(toggles.emotions && face.emotions)}
               {@const vaOn = !!(toggles.valenceArousal && face.valence_arousal)}
+              {@const behaviorOn = !!(toggles.facialBehavior && face.facial_behavior)}
               {@const poseOn = !!(toggles.poses && face.pose)}
-              {@const anyOn = emoOn || vaOn || poseOn}
+              {@const anyOn = emoOn || vaOn || behaviorOn || poseOn}
               {@const emoH = emoOn ? 64 : 0}
               {@const vaH = vaOn ? 70 : 0}
+              {@const behaviorH = behaviorOn ? 96 : 0}
               {@const poseH = poseOn ? 48 : 0}
-              {@const nOn = (emoOn ? 1 : 0) + (vaOn ? 1 : 0) + (poseOn ? 1 : 0)}
-              {@const stackW = 96}
-              {@const stackH = emoH + vaH + poseH + (nOn > 1 ? (nOn - 1) * 4 : 0)}
+              {@const nOn = (emoOn ? 1 : 0) + (vaOn ? 1 : 0) + (behaviorOn ? 1 : 0) + (poseOn ? 1 : 0)}
+              {@const stackW = behaviorOn ? 136 : 96}
+              {@const stackH = emoH + vaH + behaviorH + poseH + (nOn > 1 ? (nOn - 1) * 4 : 0)}
               {@const r = face.rect}
               {@const faceRect = { x: r?.[0] ?? 0, y: r?.[1] ?? 0, w: r?.[2] ?? 0, h: r?.[3] ?? 0 }}
               {@const others = liveFaces.filter((_, j) => j !== fi).map((o) => ({ x: o.rect?.[0] ?? 0, y: o.rect?.[1] ?? 0, w: o.rect?.[2] ?? 0, h: o.rect?.[3] ?? 0 }))}
@@ -664,6 +742,9 @@
                   {/if}
                   {#if vaOn}
                     <ValenceArousalPlot valence={face.valence_arousal!.valence} arousal={face.valence_arousal!.arousal} {smooth} {smoothStrength} />
+                  {/if}
+                  {#if behaviorOn}
+                    <FacialBehaviorPanel value={face.facial_behavior!} />
                   {/if}
                   {#if poseOn}
                     {@const deg = (x: number | null) => (x ?? 0) * 180 / Math.PI}
@@ -698,12 +779,12 @@
 
   {#if savedSessionId}
     <div class="fixed bottom-4 right-4 z-40 flex items-center gap-3 rounded-md border border-zinc-800 bg-zinc-950/95 px-3.5 py-2.5 text-sm text-zinc-200 shadow-lg">
-      <span>Recording saved</span>
+      <span>录制已保存</span>
       <button
         class="text-emerald-400 hover:text-emerald-300 font-medium"
         onclick={() => { const id = savedSessionId; savedSessionId = null; if (id) onSwitchView?.('viewer', id); }}
-      >Open in Viewer</button>
-      <button class="text-zinc-500 hover:text-zinc-300" aria-label="Dismiss" onclick={() => (savedSessionId = null)}><X size={14} /></button>
+      >查看结果</button>
+      <button class="text-zinc-500 hover:text-zinc-300" aria-label="关闭" onclick={() => (savedSessionId = null)}><X size={14} /></button>
     </div>
   {/if}
 </div>

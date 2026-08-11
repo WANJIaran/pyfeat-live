@@ -27,7 +27,7 @@
     (e.target as HTMLElement).releasePointerCapture?.(e.pointerId);
   }
 
-  let text = $state('Loading…');
+  let text = $state('正在加载…');
   let error: string | null = $state(null);
   let pre: HTMLPreElement | null = $state(null);
   // Auto-scroll to the newest line while the user is parked at the bottom;
@@ -38,7 +38,7 @@
     error = null;
     try {
       const t = await systemApi.logs();
-      text = t || '(no log output yet)';
+      text = t || '（暂无日志）';
       await tick();
       if (pre && stick) pre.scrollTop = pre.scrollHeight;
     } catch (e: unknown) {
@@ -96,17 +96,17 @@
     onpointerup={endResize}
   ></div>
   <div class="flex items-center gap-3 px-3.5 py-2.5 border-b border-zinc-900 shrink-0">
-    <h5 class="text-[11px] uppercase tracking-wider font-semibold text-zinc-400">Logs</h5>
-    <span class="text-[9px] uppercase tracking-wider text-green-500/80 font-mono">live</span>
+    <h5 class="text-[11px] tracking-wider font-semibold text-zinc-400">后台日志</h5>
+    <span class="text-[9px] tracking-wider text-green-500/80 font-mono">实时</span>
     <button
       class="inline-flex items-center gap-1 text-[10.5px] text-zinc-500 hover:text-zinc-300"
       onclick={refresh}
-    ><RotateCcw size={11} /> Refresh</button>
+    ><RotateCcw size={11} /> 刷新</button>
     <button
       class="inline-flex items-center gap-1 text-[10.5px] text-zinc-500 hover:text-zinc-300"
       onclick={download}
-    ><Download size={11} /> Save .txt</button>
-    <button class="ml-auto text-zinc-500 hover:text-zinc-300" onclick={onClose} aria-label="close">
+    ><Download size={11} /> 保存 .txt</button>
+    <button class="ml-auto text-zinc-500 hover:text-zinc-300" onclick={onClose} aria-label="关闭">
       <X size={14} />
     </button>
   </div>
@@ -119,7 +119,7 @@
 
   {#if saved}
     <div class="px-3.5 py-2 text-[10.5px] text-green-300 font-mono border-b border-green-900/40 bg-green-950/20 shrink-0 break-all">
-      Saved + revealed: {saved}
+      已保存并打开所在位置：{saved}
     </div>
   {/if}
 
