@@ -57,6 +57,24 @@ jobs:
           if (-not $uv) { throw "uv.exe missing from downloaded archive" }
           Copy-Item $uv.FullName vendor/uv/uv-x86_64-pc-windows-msvc.exe
 
+      - name: Vendor digest-verified LGPL shared FFmpeg
+        shell: pwsh
+        run: |
+          $release = Invoke-RestMethod https://api.github.com/repos/BtbN/FFmpeg-Builds/releases/tags/latest
+          $asset = $release.assets | Where-Object name -eq "ffmpeg-n8.1-latest-win64-lgpl-shared-8.1.zip"
+          if (-not $asset) { throw "Windows LGPL shared FFmpeg asset is missing" }
+          Invoke-WebRequest $asset.browser_download_url -OutFile ffmpeg-shared.zip
+          $expected = $asset.digest -replace '^sha256:', ''
+          $actual = (Get-FileHash ffmpeg-shared.zip -Algorithm SHA256).Hash.ToLowerInvariant()
+          if ($actual -ne $expected) { throw "FFmpeg SHA-256 mismatch: $actual != $expected" }
+          Expand-Archive ffmpeg-shared.zip -DestinationPath ffmpeg-unpacked
+          $root = Get-ChildItem ffmpeg-unpacked -Directory | Select-Object -First 1
+          if (-not $root) { throw "FFmpeg archive root is missing" }
+          New-Item -ItemType Directory -Force vendor/ffmpeg | Out-Null
+          Copy-Item (Join-Path $root.FullName "bin") vendor/ffmpeg/bin -Recurse
+          $dlls = Get-ChildItem vendor/ffmpeg/bin -Filter *.dll
+          if (-not $dlls) { throw "Shared FFmpeg archive contains no DLLs" }
+
       - name: Verify wheel-only Windows first-run dependencies
         shell: pwsh
         run: |
@@ -67,6 +85,12 @@ jobs:
             --python .windows-lock-venv/Scripts/python.exe `
             --requirement sidecar/runtime/requirements-windows.txt
           if ($LASTEXITCODE -ne 0) { throw "Windows runtime lock requires a source build or is unsatisfiable" }
+          & $uv pip install --python .windows-lock-venv/Scripts/python.exe `
+            --only-binary :all: torch==2.12.1 torchcodec==0.14.0
+          if ($LASTEXITCODE -ne 0) { throw "Could not install TorchCodec smoke-test runtime" }
+          $env:PATH = "$(Resolve-Path vendor/ffmpeg/bin);$env:PATH"
+          & .windows-lock-venv/Scripts/python.exe -c "import torchcodec; print('TorchCodec + bundled FFmpeg OK')"
+          if ($LASTEXITCODE -ne 0) { throw "TorchCodec could not load bundled FFmpeg DLLs" }
 
       - name: Install Tauri dependencies
         working-directory: tauri

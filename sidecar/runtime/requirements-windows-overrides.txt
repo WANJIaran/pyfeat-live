@@ -1,0 +1,4 @@
+# Windows-specific safety overrides applied while compiling
+# requirements-windows.txt. pandas 3.0.4 was yanked after reports of
+# datetime-related segmentation faults.
+pandas==3.0.3

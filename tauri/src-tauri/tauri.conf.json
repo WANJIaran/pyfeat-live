@@ -37,6 +37,7 @@
       "../../sidecar/sidecar.py": "runtime/sidecar.py",
       "../../sidecar/runtime/requirements.txt": "runtime/requirements.txt",
       "../../sidecar/runtime/requirements-windows.txt": "runtime/requirements-windows.txt",
+      "../../vendor/ffmpeg": "runtime/ffmpeg",
       "../../backend": "backend",
       "../../pyfeatlive_core": "pyfeatlive_core",
       "../dist": "dist"

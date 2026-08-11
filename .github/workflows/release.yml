@@ -132,6 +132,25 @@ jobs:
           fi
           ls -la vendor/uv/
 
+      - name: vendor digest-verified LGPL shared FFmpeg (Windows)
+        if: startsWith(matrix.platform, 'windows')
+        shell: pwsh
+        run: |
+          $release = Invoke-RestMethod https://api.github.com/repos/BtbN/FFmpeg-Builds/releases/tags/latest
+          $asset = $release.assets | Where-Object name -eq "ffmpeg-n8.1-latest-win64-lgpl-shared-8.1.zip"
+          if (-not $asset) { throw "Windows LGPL shared FFmpeg asset is missing" }
+          Invoke-WebRequest $asset.browser_download_url -OutFile ffmpeg-shared.zip
+          $expected = $asset.digest -replace '^sha256:', ''
+          $actual = (Get-FileHash ffmpeg-shared.zip -Algorithm SHA256).Hash.ToLowerInvariant()
+          if ($actual -ne $expected) { throw "FFmpeg SHA-256 mismatch: $actual != $expected" }
+          Expand-Archive ffmpeg-shared.zip -DestinationPath ffmpeg-unpacked
+          $root = Get-ChildItem ffmpeg-unpacked -Directory | Select-Object -First 1
+          if (-not $root) { throw "FFmpeg archive root is missing" }
+          Copy-Item (Join-Path $root.FullName "bin") vendor/ffmpeg/bin -Recurse
+          if (-not (Get-ChildItem vendor/ffmpeg/bin -Filter *.dll)) {
+            throw "Shared FFmpeg archive contains no DLLs"
+          }
+
       - name: install npm deps
         working-directory: tauri
         run: npm ci

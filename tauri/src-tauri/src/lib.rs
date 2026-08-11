@@ -358,6 +358,27 @@ async fn bootstrap_and_launch(app: &AppHandle) -> Result<(), String> {
         .stdout(Stdio::piped())
         .stderr(Stdio::piped());
 
+    // TorchCodec loads libtorchcodec*.dll by absolute path, but those DLLs in
+    // turn depend on FFmpeg's avcodec/avformat/etc. DLLs. Windows does not ship
+    // them, so release builds bundle an LGPL shared FFmpeg and put its bin
+    // directory on the child process PATH before Python imports `feat`.
+    #[cfg(target_os = "windows")]
+    {
+        let ffmpeg_bin = if cfg!(debug_assertions) {
+            dev_repo_root().join("vendor/ffmpeg/bin")
+        } else {
+            app.path()
+                .resource_dir()
+                .map_err(|e| format!("could not resolve resource dir for FFmpeg: {e}"))?
+                .join("runtime/ffmpeg/bin")
+        };
+        let inherited = std::env::var_os("PATH").unwrap_or_default();
+        let paths = std::iter::once(ffmpeg_bin).chain(std::env::split_paths(&inherited));
+        let path = std::env::join_paths(paths)
+            .map_err(|e| format!("could not construct sidecar PATH for FFmpeg: {e}"))?;
+        cmd.env("PATH", path);
+    }
+
     let mut child = cmd
         .spawn()
         .map_err(|e| format!("failed to spawn sidecar: {e}"))?;
