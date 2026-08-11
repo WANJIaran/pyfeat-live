@@ -12,7 +12,6 @@
     // the user-facing label changes. Room for a real analysis UI later.
     { id: 'analyze', label: '视频分析' },
     { id: 'viewer', label: '结果查看' },
-    { id: 'generate', label: '表情生成' },
   ];
 </script>
 

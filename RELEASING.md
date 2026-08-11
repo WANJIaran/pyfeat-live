@@ -34,7 +34,7 @@ publishes it to a GitHub Release, and emits the auto-updater `latest.json`.
    `workflow_dispatch` input.
 5. **Verify**: download the `.dmg`, install, and smoke-test — CI does not run
    the app. On first launch the runtime venv installs (torch / py-feat /
-   pyfeat-generator from PyPI; model weights from the public `py-feat`
+   Python dependencies from PyPI; model weights from the public `py-feat`
    HuggingFace org).
 
 ## Patch / hotfix

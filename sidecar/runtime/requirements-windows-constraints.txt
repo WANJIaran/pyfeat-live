@@ -46,7 +46,6 @@ prettytable==3.18.0
 py-feat==2.1.1
 pydantic==2.13.4
 pydantic-core==2.46.4
-pyfeat-generator==0.1.1
 pygments==2.20.0
 pyparsing==3.3.2
 python-dateutil==2.9.0.post0

@@ -154,13 +154,6 @@ pub fn run() {
             // the install button needs), so the menu just pokes it via
             // `menu://check-for-updates` and the UpdateBanner re-runs its own
             // check.
-            let settings = MenuItem::with_id(
-                app,
-                "settings",
-                "Settings…",
-                true,
-                Some("CmdOrCtrl+,"),
-            )?;
             let check_updates = MenuItem::with_id(
                 app,
                 "check-for-updates",
@@ -170,8 +163,6 @@ pub fn run() {
             )?;
             let mut app_menu = SubmenuBuilder::new(app, "Py-feat")
                 .about(None)
-                .separator()
-                .item(&settings)
                 .separator()
                 .item(&check_updates)
                 .separator();
@@ -212,9 +203,6 @@ pub fn run() {
                 match event.id().0.as_str() {
                     "check-for-updates" => {
                         let _ = app.emit("menu://check-for-updates", ());
-                    }
-                    "settings" => {
-                        let _ = app.emit("menu://settings", ());
                     }
                     _ => {}
                 }

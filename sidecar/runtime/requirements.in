@@ -25,7 +25,6 @@
 #     --python-version 3.12 --python-platform x86_64-pc-windows-msvc \
 #     --only-binary :all: --emit-build-options
 py-feat==2.1.1
-pyfeat-generator==0.1.1
 torchcodec==0.14.0  # match torch 2.12 (transitive via py-feat resolves to a stale 0.11 otherwise)
 fastapi>=0.115
 uvicorn[standard]>=0.34

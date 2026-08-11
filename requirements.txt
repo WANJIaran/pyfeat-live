@@ -1,5 +1,4 @@
 py-feat==2.1.1
-pyfeat-generator==0.1.1
 torchcodec==0.14.0  # match torch pin (transitive via py-feat resolves to a stale 0.11 otherwise)
 av==16.1.0
 pillow==12.2.0
