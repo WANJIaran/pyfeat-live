@@ -2,6 +2,7 @@
   import OverlayCanvas from './OverlayCanvas.svelte';
   import EmotionBars from './EmotionBars.svelte';
   import ValenceArousalPlot from './ValenceArousalPlot.svelte';
+  import FacialBehaviorPanel from './FacialBehaviorPanel.svelte';
   import PoseCube from './PoseCube.svelte';
   import { placeMetaStack } from '../overlay/metaStack';
   import type { Face, OverlayToggles, OverlayStyleConfig } from '../overlay/types';
@@ -292,14 +293,16 @@
           {#each faces as face, fi}
             {@const emoOn = !!(toggles.emotions && face.emotions)}
             {@const vaOn = !!(toggles.valenceArousal && face.valence_arousal)}
+            {@const behaviorOn = !!(toggles.facialBehavior && face.facial_behavior)}
             {@const poseOn = !!(toggles.poses && face.pose)}
-            {@const anyOn = emoOn || vaOn || poseOn}
+            {@const anyOn = emoOn || vaOn || behaviorOn || poseOn}
             {@const emoH = emoOn ? 64 : 0}
             {@const vaH = vaOn ? 70 : 0}
+            {@const behaviorH = behaviorOn ? 96 : 0}
             {@const poseH = poseOn ? 48 : 0}
-            {@const nOn = (emoOn ? 1 : 0) + (vaOn ? 1 : 0) + (poseOn ? 1 : 0)}
-            {@const stackW = 96}
-            {@const stackH = emoH + vaH + poseH + (nOn > 1 ? (nOn - 1) * 4 : 0)}
+            {@const nOn = (emoOn ? 1 : 0) + (vaOn ? 1 : 0) + (behaviorOn ? 1 : 0) + (poseOn ? 1 : 0)}
+            {@const stackW = behaviorOn ? 136 : 96}
+            {@const stackH = emoH + vaH + behaviorH + poseH + (nOn > 1 ? (nOn - 1) * 4 : 0)}
             {@const r = face.rect}
             <!-- Face rect + neighbors mapped to SCREEN px (× displayScale); the
                  panel stack itself is fixed-size, placed in that screen space. -->
@@ -315,6 +318,9 @@
                 {/if}
                 {#if vaOn}
                   <ValenceArousalPlot valence={face.valence_arousal!.valence} arousal={face.valence_arousal!.arousal} {smooth} {smoothStrength} />
+                {/if}
+                {#if behaviorOn}
+                  <FacialBehaviorPanel value={face.facial_behavior!} />
                 {/if}
                 {#if poseOn}
                   {@const deg = (x: number | null) => (x ?? 0) * 180 / Math.PI}

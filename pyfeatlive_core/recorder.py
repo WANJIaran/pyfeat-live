@@ -42,6 +42,8 @@ import av
 import numpy as np
 import pandas as pd
 
+from pyfeatlive_core.indices import augment_facial_behavior_dataframe
+
 from pyfeatlive_core.capabilities import capabilities_for
 
 
@@ -422,6 +424,10 @@ class SessionRecorder:
             # as the natural primary key, so two faces in frame 7 must be
             # (7,0) and (7,1), never (7,0)/(8,1).
             fex = fex.copy()
+            # Persist additive, explicitly named evidence columns so both live
+            # recordings and Analyze sessions can reproduce the UI readout
+            # without re-running the detector.
+            fex = augment_facial_behavior_dataframe(fex)
             # Normalize coords to the ENCODED video resolution. Every frame is
             # re-encoded to (enc_w, enc_h); when the offered frame's native
             # size differs the fex coords would be in the wrong pixel space.

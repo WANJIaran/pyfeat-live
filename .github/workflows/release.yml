@@ -42,7 +42,7 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          # macOS arm64 (Apple Silicon) — the only supported target.
+          # macOS arm64 (Apple Silicon).
           # macos-14 GHA runners are themselves Apple Silicon, so this is
           # a native host build (no --target), which keeps bundle output
           # in the default target/release/bundle path. That matters for
@@ -53,10 +53,13 @@ jobs:
           - platform: macos-14
             target: aarch64-apple-darwin
             uv_asset: uv-aarch64-apple-darwin.tar.gz
-          # Windows x86_64 — TODO: enable once macOS pipeline is green.
-          # - platform: windows-2022
-          #   target: x86_64-pc-windows-msvc
-          #   uv_asset: uv-x86_64-pc-windows-msvc.zip
+            tauri_args: ""
+          # Windows builds natively because the Python/PyTorch runtime and
+          # Tauri WebView cannot be validated by Linux cross-compilation.
+          - platform: windows-2022
+            target: x86_64-pc-windows-msvc
+            uv_asset: uv-x86_64-pc-windows-msvc.zip
+            tauri_args: "--bundles nsis"
           # Linux x86_64 — TODO: same.
           # - platform: ubuntu-22.04
           #   target: x86_64-unknown-linux-gnu
@@ -229,6 +232,7 @@ jobs:
           # APPLE_API_KEY_PATH is exported by the previous step into GITHUB_ENV
         with:
           projectPath: tauri
+          args: ${{ matrix.tauri_args }}
           # No --target: build natively for the host (macos-14 = Apple
           # Silicon). This keeps bundle output at target/release/bundle so
           # tauri-action finds the .app.tar.gz.sig and emits latest.json

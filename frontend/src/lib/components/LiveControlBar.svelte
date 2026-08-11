@@ -51,6 +51,7 @@
     { key: 'blendshapes', label: 'Blendshapes', detectorv2Only: true },
     { key: 'emotions', label: 'Emotions', requires: 'emotion_model' },
     { key: 'valenceArousal', label: 'Valence / Arousal', detectorv2Only: true },
+    { key: 'facialBehavior', label: 'Behavior indices', requires: 'au_model' },
   ];
 
   // Detectorv2-only chips are hidden entirely for other detectors.

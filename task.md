@@ -1,0 +1,27 @@
+# Task Progress: Facial Behavior Index Extension (Research-Only First Draft)
+
+- [x] Initial codebase inspection and requirements analysis
+- [x] Create core package structure `pyfeatlive_core/indices/`
+  - [x] Implement `pyfeatlive_core/indices/heuristics.py` (Geometric aggregation, expression evidence, valence, activation, confidence)
+  - [x] Implement `pyfeatlive_core/indices/smoothing.py` (EWMA, hysteresis, neutral baseline calibration)
+  - [x] Implement `pyfeatlive_core/indices/schema.py` (Minimal serialization schema)
+  - [x] Implement `pyfeatlive_core/indices/__init__.py` (Package exports)
+- [x] Add unit tests in `tests/core/test_indices.py`
+  - [x] Bounds verification (Valence [-100, 100], Activation [0, 100], Confidence [0, 100])
+  - [x] Missing data handling & confidence penalty
+  - [x] Monotonicity checks
+  - [x] Quality factor impact on confidence
+  - [x] EWMA smoothing, hysteresis, neutral baseline tests
+  - [x] NaN/Inf and boundary input safety checks
+- [x] Create documentation files
+  - [x] `docs/INDEX_DEFINITIONS.md`
+  - [x] `docs/PSYCHOLOGY_BASIS.md`
+  - [x] `docs/LIMITATIONS.md`
+  - [x] `THIRD_PARTY_LICENSES.md`
+- [x] Verify non-disruptive integration & export in `pyfeatlive_core/__init__.py`
+- [x] Add additive `facial_behavior` output to live per-face serialization
+- [x] Add a guarded Facial Behavior Evidence panel to the Live UI
+- [x] Persist derived evidence columns into live and Analyze `fex.csv` sessions
+- [x] Reconstruct the same evidence panel during Viewer playback
+- [x] Add Windows x86_64 NSIS release and smoke-workflow definitions
+- [ ] Run the Windows workflow remotely and validate its installer on Windows 10/11 hardware

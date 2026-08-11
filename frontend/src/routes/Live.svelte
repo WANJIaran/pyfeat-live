@@ -15,6 +15,7 @@
   import OverlayConfigModal from '../lib/components/OverlayConfigModal.svelte';
   import EmotionBars from '../lib/components/EmotionBars.svelte';
   import ValenceArousalPlot from '../lib/components/ValenceArousalPlot.svelte';
+  import FacialBehaviorPanel from '../lib/components/FacialBehaviorPanel.svelte';
   import PoseCube from '../lib/components/PoseCube.svelte';
   import OverlayCanvas from '../lib/components/OverlayCanvas.svelte';
   import { placeMetaStack } from '../lib/overlay/metaStack';
@@ -84,6 +85,7 @@
   let toggles: OverlayToggles = $state({
     rects: true, landmarks: true, poses: false,
     gaze: false, aus: false, blendshapes: false, emotions: false, valenceArousal: false,
+    facialBehavior: true,
   });
 
   // Live face data from the unified Face payload — drives both OverlayCanvas
@@ -643,14 +645,16 @@
             {#each liveFaces as face, fi}
               {@const emoOn = !!(toggles.emotions && face.emotions)}
               {@const vaOn = !!(toggles.valenceArousal && face.valence_arousal)}
+              {@const behaviorOn = !!(toggles.facialBehavior && face.facial_behavior)}
               {@const poseOn = !!(toggles.poses && face.pose)}
-              {@const anyOn = emoOn || vaOn || poseOn}
+              {@const anyOn = emoOn || vaOn || behaviorOn || poseOn}
               {@const emoH = emoOn ? 64 : 0}
               {@const vaH = vaOn ? 70 : 0}
+              {@const behaviorH = behaviorOn ? 96 : 0}
               {@const poseH = poseOn ? 48 : 0}
-              {@const nOn = (emoOn ? 1 : 0) + (vaOn ? 1 : 0) + (poseOn ? 1 : 0)}
-              {@const stackW = 96}
-              {@const stackH = emoH + vaH + poseH + (nOn > 1 ? (nOn - 1) * 4 : 0)}
+              {@const nOn = (emoOn ? 1 : 0) + (vaOn ? 1 : 0) + (behaviorOn ? 1 : 0) + (poseOn ? 1 : 0)}
+              {@const stackW = behaviorOn ? 136 : 96}
+              {@const stackH = emoH + vaH + behaviorH + poseH + (nOn > 1 ? (nOn - 1) * 4 : 0)}
               {@const r = face.rect}
               {@const faceRect = { x: r?.[0] ?? 0, y: r?.[1] ?? 0, w: r?.[2] ?? 0, h: r?.[3] ?? 0 }}
               {@const others = liveFaces.filter((_, j) => j !== fi).map((o) => ({ x: o.rect?.[0] ?? 0, y: o.rect?.[1] ?? 0, w: o.rect?.[2] ?? 0, h: o.rect?.[3] ?? 0 }))}
@@ -664,6 +668,9 @@
                   {/if}
                   {#if vaOn}
                     <ValenceArousalPlot valence={face.valence_arousal!.valence} arousal={face.valence_arousal!.arousal} {smooth} {smoothStrength} />
+                  {/if}
+                  {#if behaviorOn}
+                    <FacialBehaviorPanel value={face.facial_behavior!} />
                   {/if}
                   {#if poseOn}
                     {@const deg = (x: number | null) => (x ?? 0) * 180 / Math.PI}
