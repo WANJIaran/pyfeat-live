@@ -51,6 +51,19 @@ _DETECTION_EXECUTOR = ThreadPoolExecutor(
 )
 
 
+def _frame_result(live) -> dict:
+    """Small cached result shared by frame upload and lightweight polling."""
+    dims = live._cached_frame_dims or [640, 360]
+    return {
+        "id": live._cached_frame_id,
+        "generation": live._detection_generation,
+        "frame": [int(dims[0]), int(dims[1])],
+        "faces": live._cached_faces,
+        "analyzing": live._detection_in_flight,
+        "detection_error": live._detection_error,
+    }
+
+
 @router.post("/frame")
 async def upload_frame(request: Request) -> Response:
     """Schedule async detection on ~1-in-N frames and return latest cached result.
@@ -110,15 +123,18 @@ async def upload_frame(request: Request) -> Response:
     # event loop and starved detection to ~1 fps while recording.
 
     # --- return the cached faces list (serialized once per detection) ----
-    dims = live._cached_frame_dims or [640, 360]
-    return {
-        "id": live._cached_frame_id,
-        "generation": live._detection_generation,
-        "frame": [int(dims[0]), int(dims[1])],
-        "faces": live._cached_faces,
-        "analyzing": live._detection_in_flight,
-        "detection_error": live._detection_error,
-    }
+    return _frame_result(live)
+
+
+@router.get("/frame/status")
+async def frame_status(request: Request) -> dict:
+    """Return the cached analysis state without uploading another JPEG.
+
+    While inference is running the camera client polls this tiny response.
+    Previously it JPEG-encoded and POSTed ~30 redundant frames per second;
+    none could be analyzed until the single detector worker became free.
+    """
+    return _frame_result(request.app.state.live)
 
 
 

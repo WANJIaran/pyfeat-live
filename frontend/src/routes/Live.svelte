@@ -29,7 +29,10 @@
   // RATIO is always preserved — everything downstream (overlay coord space,
   // stage aspect, meta panels) derives from the actual frame dims the
   // backend echoes back, so the app adapts to any camera/resolution.
-  const DET_BUDGET = 640;
+  // 512px keeps enough detail for Detectorv2's internal 256px face crop while
+  // cutting detector-input pixels by 36% compared with the old 640px budget.
+  // The visible camera remains at native resolution.
+  const DET_BUDGET = 512;
   // CAPTURE resolution — a *preference* we request from the camera; the
   // camera reports its real videoWidth/videoHeight, which is what we use.
   const CAP_W = 1280, CAP_H = 720;
@@ -432,6 +435,15 @@
       let result;
       try {
         result = await liveApi.uploadFrame(blob, id);
+        // Only one detector job can run at a time. Poll a tiny cached-status
+        // response while it works instead of encoding and uploading camera
+        // frames that the backend cannot consume. As soon as it finishes the
+        // next loop iteration captures a fresh frame, preserving low latency.
+        while (result.analyzing && !signal.aborted) {
+          await new Promise((r) => setTimeout(r, 25));
+          if (signal.aborted) return;
+          result = await liveApi.frameStatus();
+        }
         apiError = result.detection_error
           ? `画面分析失败：${result.detection_error}`
           : null;

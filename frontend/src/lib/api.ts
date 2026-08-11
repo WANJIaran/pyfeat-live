@@ -216,6 +216,7 @@ export const liveApi = {
     if (!r.ok) throw new ApiError(r.status, `uploadFrame: ${r.status} ${r.statusText}`);
     return (await r.json()) as LiveFrameResult;
   },
+  frameStatus: () => request<LiveFrameResult>('/api/live/frame/status'),
   recordingStart: (body: {
     record_video: boolean;
     record_fex: boolean;
