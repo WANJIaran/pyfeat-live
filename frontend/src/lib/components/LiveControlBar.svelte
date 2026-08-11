@@ -43,15 +43,15 @@
     detectorv2Only?: boolean;
   };
   const CHIP_DEFS: Chip[] = [
-    { key: 'rects', label: 'Faceboxes' },
-    { key: 'landmarks', label: 'Landmarks' },
-    { key: 'poses', label: 'Pose' },
-    { key: 'gaze', label: 'Gaze', requires: 'gaze_model' },
-    { key: 'aus', label: 'AUs', requires: 'au_model' },
-    { key: 'blendshapes', label: 'Blendshapes', detectorv2Only: true },
-    { key: 'emotions', label: 'Emotions', requires: 'emotion_model' },
-    { key: 'valenceArousal', label: 'Valence / Arousal', detectorv2Only: true },
-    { key: 'facialBehavior', label: 'Behavior indices', requires: 'au_model' },
+    { key: 'rects', label: '人脸框' },
+    { key: 'landmarks', label: '面部关键点' },
+    { key: 'poses', label: '头部姿态' },
+    { key: 'gaze', label: '视线', requires: 'gaze_model' },
+    { key: 'aus', label: '动作单元' , requires: 'au_model' },
+    { key: 'blendshapes', label: '混合形状', detectorv2Only: true },
+    { key: 'emotions', label: '基础表情', requires: 'emotion_model' },
+    { key: 'valenceArousal', label: '效价 / 唤醒度', detectorv2Only: true },
+    { key: 'facialBehavior', label: '行为指数', requires: 'au_model' },
   ];
 
   // Detectorv2-only chips are hidden entirely for other detectors.
@@ -75,7 +75,7 @@
       {@const dim = unavailable(chip)}
       <button
         class="px-2.5 py-1 rounded-md text-[11px] font-medium border {toggles[chip.key] && !dim ? 'bg-green-500/10 border-green-500/30 text-green-400' : 'border-zinc-800 text-zinc-500 hover:text-zinc-300 hover:border-zinc-700'} {dim ? 'opacity-40 cursor-not-allowed' : ''}"
-        title={dim ? `${chip.label} requires ${String(chip.requires)} — pick a model in the sidebar to enable.` : ''}
+        title={dim ? `${chip.label}需要相应模型，请先在左侧选择模型。` : ''}
         disabled={dim}
         onclick={() => onToggleChange(chip.key, !toggles[chip.key])}
       >{chip.label}</button>
@@ -83,7 +83,7 @@
   </div>
   <button
     class="p-1.5 rounded-md border border-zinc-800 text-zinc-400 hover:text-zinc-200 hover:border-zinc-700"
-    title="Overlay settings"
+    title="叠加显示设置"
     onclick={onOpenSettings}
   ><SlidersHorizontal size={14} /></button>
 
@@ -93,28 +93,28 @@
       <button
         class="px-3 py-1.5 rounded-md text-[11.5px] font-medium inline-flex items-center gap-1.5 bg-green-500 text-green-950 border border-green-500 hover:bg-green-400"
         onclick={onStartStream}
-        title="Start camera stream"
+        title="启动摄像头"
       >
-        <Play size={13} fill="currentColor" stroke="none" /> Start
+        <Play size={13} fill="currentColor" stroke="none" /> 开始
       </button>
     {:else}
       <button
         class="px-3 py-1.5 rounded-md text-[11.5px] font-medium inline-flex items-center gap-1.5 bg-zinc-900 border border-zinc-800 text-zinc-200 hover:bg-zinc-800"
         onclick={onPauseStream}
-        title={isPaused ? 'Resume detection (camera already on)' : 'Pause detection (camera stays on)'}
+        title={isPaused ? '继续识别（摄像头保持开启）' : '暂停识别（摄像头保持开启）'}
       >
         {#if isPaused}
-          <Play size={13} fill="currentColor" stroke="none" /> Resume
+          <Play size={13} fill="currentColor" stroke="none" /> 继续
         {:else}
-          <Pause size={13} /> Pause
+          <Pause size={13} /> 暂停
         {/if}
       </button>
       <button
         class="px-3 py-1.5 rounded-md text-[11.5px] font-medium inline-flex items-center gap-1.5 bg-zinc-900 border border-zinc-800 text-zinc-200 hover:bg-zinc-800"
         onclick={onStopStream}
-        title="Stop camera and release the device"
+        title="停止并释放摄像头"
       >
-        <Square size={13} /> Stop
+        <Square size={13} /> 停止
       </button>
     {/if}
   </div>
@@ -126,23 +126,23 @@
         class="px-3 py-1.5 rounded-md text-[11.5px] font-medium inline-flex items-center gap-1.5 {isStreaming ? 'bg-red-600 text-white border-red-600 hover:bg-red-500' : 'bg-zinc-900 border border-zinc-800 text-zinc-600 cursor-not-allowed'}"
         disabled={!isStreaming}
         onclick={onRecord}
-        title={isStreaming ? 'Start recording video + Fex CSV' : 'Start the camera first'}
+        title={isStreaming ? '录制视频和 Fex 数据' : '请先启动摄像头'}
       >
-        <Circle size={13} fill="currentColor" stroke="none" /> Record
+        <Circle size={13} fill="currentColor" stroke="none" /> 录制
       </button>
     {:else}
       <button
         class="px-3 py-1.5 rounded-md text-[11.5px] font-medium inline-flex items-center gap-1.5 bg-red-600/15 text-red-400 border border-red-600/40 hover:bg-red-600/25"
         onclick={onStopRecord}
-        title="Stop recording (camera stays on)"
+        title="停止录制（摄像头保持开启）"
       >
-        <Square size={13} fill="currentColor" stroke="none" /> Stop rec
+        <Square size={13} fill="currentColor" stroke="none" /> 停止录制
       </button>
     {/if}
     <button
       class="p-1.5 rounded-md inline-flex items-center {isStreaming ? 'bg-zinc-900 border border-zinc-800 text-zinc-200 hover:bg-zinc-800' : 'bg-zinc-900 border border-zinc-800 text-zinc-600 cursor-not-allowed'}"
       disabled={!isStreaming}
-      title={isStreaming ? 'Capture frame' : 'Start the camera first'}
+      title={isStreaming ? '截取当前画面' : '请先启动摄像头'}
       onclick={onCapture}
     >
       <Camera size={13} />

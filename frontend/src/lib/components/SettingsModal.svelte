@@ -25,16 +25,16 @@
     onclick={(e) => e.stopPropagation()}
   >
     <div class="flex items-center px-4 py-3 border-b border-zinc-800 sticky top-0 bg-zinc-900">
-      <h5 class="text-[11px] uppercase tracking-wider font-semibold text-zinc-400">Settings</h5>
-      <button class="ml-auto text-zinc-500 hover:text-zinc-300" onclick={onClose} aria-label="close">
+      <h5 class="text-[11px] tracking-wider font-semibold text-zinc-400">设置</h5>
+      <button class="ml-auto text-zinc-500 hover:text-zinc-300" onclick={onClose} aria-label="关闭">
         <X size={15} />
       </button>
     </div>
 
     <div class="px-4 py-3">
-      <div class="text-[10.5px] uppercase tracking-wider font-semibold text-zinc-500 mb-1">Experimental features</div>
+      <div class="text-[10.5px] tracking-wider font-semibold text-zinc-500 mb-1">实验性功能</div>
       <p class="text-[11px] text-zinc-500 mb-3 leading-snug">
-        Unstable, in-development features for testing. Off by default.
+        尚在开发、可能不稳定的测试功能，默认关闭。
       </p>
       <div class="divide-y divide-zinc-800/70">
         {#each FLAGS as flag (flag.id)}

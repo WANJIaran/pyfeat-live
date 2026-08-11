@@ -7,12 +7,12 @@
   let { view, onViewChange, onToggleLogs, logsOpen }: Props = $props();
 
   const tabs: { id: View; label: string }[] = [
-    { id: 'live', label: 'Live' },
+    { id: 'live', label: '实时识别' },
     // Internal id stays 'analyze' (API routes are /api/analyze/*); only
     // the user-facing label changes. Room for a real analysis UI later.
-    { id: 'analyze', label: 'Extract' },
-    { id: 'viewer', label: 'Viewer' },
-    { id: 'generate', label: 'Generate' },
+    { id: 'analyze', label: '视频分析' },
+    { id: 'viewer', label: '结果查看' },
+    { id: 'generate', label: '表情生成' },
   ];
 </script>
 
@@ -40,9 +40,9 @@
     <button
       class="ml-2 px-2 py-1 rounded text-[11px] inline-flex items-center gap-1 {logsOpen ? 'bg-zinc-800 text-zinc-50' : 'text-zinc-500 hover:text-zinc-300'}"
       onclick={onToggleLogs}
-      title="Toggle backend logs"
+      title="显示或隐藏后台日志"
     >
-      <FileText size={12} /> Logs
+      <FileText size={12} /> 日志
     </button>
   </nav>
 </header>

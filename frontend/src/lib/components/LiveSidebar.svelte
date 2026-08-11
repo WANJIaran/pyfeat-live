@@ -1,6 +1,6 @@
 <script lang="ts">
   import ChevronDown from '@lucide/svelte/icons/chevron-down';
-  import { cameraStore } from '../webrtc/useCamera.svelte';
+  import { cameraStore, refreshDevices } from '../webrtc/useCamera.svelte';
   import type { LiveConfigure, ComputeInfo, DetectorCapabilities } from '../api';
 
   type Props = {
@@ -19,13 +19,13 @@
   // Canonical display order for category keys (present in a detector's map
   // → shown; absent → hidden). This drives modelRows below.
   const CATEGORY_ORDER: [string, string][] = [
-    ['face_model',     'Face'],
-    ['facepose_model', 'Pose'],
-    ['landmark_model', 'Landmark'],
-    ['au_model',       'Action units'],
-    ['emotion_model',  'Emotion'],
-    ['identity_model', 'Identity'],
-    ['gaze_model',     'Gaze'],
+    ['face_model',     '人脸'],
+    ['facepose_model', '姿态'],
+    ['landmark_model', '关键点'],
+    ['au_model',       '动作单元'],
+    ['emotion_model',  '表情'],
+    ['identity_model', '身份'],
+    ['gaze_model',     '视线'],
   ];
 
   // Capabilities for the currently selected detector type.
@@ -40,10 +40,10 @@
     }
     // Fallback (pre-load / error): replicate the old hardcoded sets.
     if (config.detector_type === 'Detectorv2') {
-      return [['face_model', 'Face'], ['identity_model', 'Identity']];
+      return [['face_model', '人脸'], ['identity_model', '身份']];
     }
     if (config.detector_type === 'MPDetector') {
-      return [['face_model', 'Face'], ['au_model', 'Action units'], ['emotion_model', 'Emotion'], ['identity_model', 'Identity']];
+      return [['face_model', '人脸'], ['au_model', '动作单元'], ['emotion_model', '表情'], ['identity_model', '身份']];
     }
     return CATEGORY_ORDER;
   });
@@ -116,7 +116,10 @@
 <aside class="w-[200px] p-4 bg-zinc-900 border-r border-zinc-900 space-y-4">
   <!-- Camera (above Detector so device selection is the first thing) -->
   <div>
-    <div class="text-[10px] uppercase tracking-wider text-zinc-500 mb-2 font-semibold">Camera</div>
+    <div class="flex items-center justify-between text-[10px] tracking-wider text-zinc-500 mb-2 font-semibold">
+      <span>摄像头</span>
+      <button class="text-emerald-500 hover:text-emerald-300" onclick={() => refreshDevices()} title="重新检测摄像头">刷新</button>
+    </div>
     <div class="relative">
       <select
         class="w-full appearance-none pl-2 pr-7 py-1.5 rounded bg-zinc-900 border border-zinc-800 text-[11.5px] text-zinc-200"
@@ -129,11 +132,17 @@
       </select>
       <ChevronDown size={10} class="absolute right-2 top-1/2 -translate-y-1/2 text-zinc-500 pointer-events-none" />
     </div>
+    {#if cameraStore.devices.length === 0}
+      <div class="mt-1.5 text-[10px] text-amber-400">未检测到摄像头</div>
+    {/if}
+    {#if cameraStore.error}
+      <div class="mt-1.5 text-[10px] leading-relaxed text-red-400">{cameraStore.error}</div>
+    {/if}
   </div>
 
   <!-- Detector type -->
   <div>
-    <div class="text-[10px] uppercase tracking-wider text-zinc-500 mb-2 font-semibold">Detector</div>
+    <div class="text-[10px] tracking-wider text-zinc-500 mb-2 font-semibold">检测器</div>
     <div class="grid grid-cols-2 gap-0.5 bg-zinc-900 rounded-md p-0.5">
       {#each [['Detectorv2', 'Detector​v2'], ['Detectorv1', 'Detector​v1']] as [type, label]}
         <button
@@ -146,7 +155,7 @@
 
   <!-- Models -->
   <div>
-    <div class="text-[10px] uppercase tracking-wider text-zinc-500 mb-2 font-semibold">Models</div>
+    <div class="text-[10px] tracking-wider text-zinc-500 mb-2 font-semibold">模型</div>
     {#each modelRows as [key, label]}
       <div class="mb-2">
         <div class="text-[11px] text-zinc-400 mb-1">{label}</div>
@@ -166,7 +175,7 @@
             }}
           >
             {#each (key === 'facepose_model' ? poseOptions : optionsFor(key)) as opt}
-              <option value={opt ?? ''}>{opt ?? '(disabled)'}</option>
+              <option value={opt ?? ''}>{opt ?? '（禁用）'}</option>
             {/each}
           </select>
           <ChevronDown size={10} class="absolute right-2 top-1/2 -translate-y-1/2 text-zinc-500 pointer-events-none" />
@@ -177,7 +186,7 @@
 
   <!-- Compute -->
   <div>
-    <div class="text-[10px] uppercase tracking-wider text-zinc-500 mb-2 font-semibold">Compute</div>
+    <div class="text-[10px] tracking-wider text-zinc-500 mb-2 font-semibold">计算设备</div>
     <div class="flex gap-0.5 bg-zinc-900 rounded-md p-0.5">
       {#each ['cpu', 'mps', 'cuda'] as dev}
         {@const available = compute?.[dev as keyof ComputeInfo]?.available ?? (dev === 'cpu')}
