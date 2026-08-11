@@ -16,6 +16,13 @@
 # Linux, pulled cuda-bindings, which has no macOS wheels, and every updated
 # app failed first-run setup. MACOSX_DEPLOYMENT_TARGET=14.0 is needed because
 # torchcodec ships macosx_14_0 wheels and uv's cross-target default is 13.0.)
+#
+# Windows has a separate wheel-only lock. Keep existing pins while compiling:
+#   uv pip compile sidecar/runtime/requirements.in \
+#     --constraint sidecar/runtime/requirements.txt \
+#     -o sidecar/runtime/requirements-windows.txt --generate-hashes \
+#     --python-version 3.12 --python-platform x86_64-pc-windows-msvc \
+#     --only-binary :all: --emit-build-options
 py-feat==2.1.1
 pyfeat-generator==0.1.1
 torchcodec==0.14.0  # match torch 2.12 (transitive via py-feat resolves to a stale 0.11 otherwise)

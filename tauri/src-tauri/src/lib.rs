@@ -302,7 +302,7 @@ async fn bootstrap_and_launch(app: &AppHandle) -> Result<(), String> {
             .path()
             .resource_dir()
             .map_err(|e| format!("could not resolve resource dir: {e}"))?;
-        let requirements = resource_dir.join("runtime/requirements.txt");
+        let requirements = bundled_requirements(&resource_dir);
         if needs_install(&python_path, &runtime_dir, &requirements) {
             // Remove a stale venv so a dependency change yields a clean
             // tree (drops packages that were removed across versions).
@@ -485,6 +485,17 @@ fn requirements_stamp_path(runtime_dir: &Path) -> PathBuf {
     runtime_dir.join(".requirements-stamp")
 }
 
+/// Return the lock compiled for the end user's platform. The original lock is
+/// resolved for Apple Silicon; feeding it to Windows can make uv fall back to
+/// Rust source builds and unexpectedly require Visual Studio's link.exe.
+fn bundled_requirements(resource_dir: &Path) -> PathBuf {
+    if cfg!(target_os = "windows") {
+        resource_dir.join("runtime/requirements-windows.txt")
+    } else {
+        resource_dir.join("runtime/requirements.txt")
+    }
+}
+
 /// Whether the Python runtime needs (re)installing: when the venv's python
 /// is missing, when no stamp exists (older install), or when the bundled
 /// requirements.txt differs from the stamped one. The stamp stores the
@@ -515,7 +526,7 @@ async fn run_bootstrap(
         .path()
         .resource_dir()
         .map_err(|e| format!("could not resolve resource dir: {e}"))?;
-    let requirements = resource_dir.join("runtime/requirements.txt");
+    let requirements = bundled_requirements(&resource_dir);
 
     // 1. Create the venv with a uv-managed standalone Python 3.12.
     emit_log(app, "stdout", "Creating Python 3.12 runtime…");

@@ -57,6 +57,17 @@ jobs:
           if (-not $uv) { throw "uv.exe missing from downloaded archive" }
           Copy-Item $uv.FullName vendor/uv/uv-x86_64-pc-windows-msvc.exe
 
+      - name: Verify wheel-only Windows first-run dependencies
+        shell: pwsh
+        run: |
+          $uv = "vendor/uv/uv-x86_64-pc-windows-msvc.exe"
+          & $uv venv --python 3.12 .windows-lock-venv
+          if ($LASTEXITCODE -ne 0) { throw "Could not create Windows runtime test venv" }
+          & $uv pip install --dry-run --require-hashes `
+            --python .windows-lock-venv/Scripts/python.exe `
+            --requirement sidecar/runtime/requirements-windows.txt
+          if ($LASTEXITCODE -ne 0) { throw "Windows runtime lock requires a source build or is unsatisfiable" }
+
       - name: Install Tauri dependencies
         working-directory: tauri
         run: npm ci
